@@ -3,10 +3,16 @@ import Foundation
 /// Encodes ``CallOptions`` into an Anthropic Messages request body.
 public enum AnthropicMessagesRequest {
 
-    /// - Parameter model: catalog metadata for the target model, when known.
-    ///   Used to drop settings the model rejects rather than letting the
-    ///   request fail.
-    public static func encode(_ options: CallOptions, model: ModelInfo? = nil) -> EncodedRequest {
+    /// - Parameters:
+    ///   - model: catalog metadata for the target model, when known. Used to
+    ///     drop settings the model rejects rather than letting the request fail.
+    ///   - reasoningToggle: a provider-level override for how thinking is
+    ///     switched on and off — resellers of this protocol rename the values.
+    public static func encode(
+        _ options: CallOptions,
+        model: ModelInfo? = nil,
+        reasoningToggle: ProviderInfo.ReasoningToggle? = nil
+    ) -> EncodedRequest {
         var body: [String: JSONValue] = [
             "model": .string(options.model),
             "stream": .bool(true),
@@ -65,12 +71,71 @@ public enum AnthropicMessagesRequest {
             }
         }
 
+        if let thinking = options.thinking {
+            warnings += applyThinking(
+                thinking.plan(model: model, modelId: options.model),
+                toggle: reasoningToggle,
+                to: &body
+            )
+        }
+
         // Provider options merge last so a caller can always override.
         for (key, value) in options.options(for: "anthropic") {
             body[key] = value
         }
 
         return EncodedRequest(body: .object(body), warnings: warnings)
+    }
+
+    // MARK: - Thinking
+
+    /// Writes the `thinking` block, in whichever of this protocol's three
+    /// shapes the model accepts.
+    ///
+    /// Newer models take `{"type": "adaptive"}` with depth as a separate
+    /// `effort`; the 4.x generation takes `{"type": "enabled"}` with a token
+    /// budget, which must stay below `max_tokens` because both come out of the
+    /// same allowance. Off is `{"type": "disabled"}` — accepted on models that
+    /// can be quieted, rejected on the ones that always think, which is why the
+    /// plan decides rather than the encoder.
+    private static func applyThinking(
+        _ plan: ThinkingPlan,
+        toggle: ProviderInfo.ReasoningToggle?,
+        to body: inout [String: JSONValue]
+    ) -> [Warning] {
+        guard plan.enabled else {
+            guard plan.canDisable else { return plan.warnings }
+            if let toggle, let disabled = toggle.disabled {
+                toggle.apply(disabled, to: &body)
+            } else {
+                body["thinking"] = .object(["type": .string("disabled")])
+            }
+            return plan.warnings
+        }
+
+        if let budget = plan.budgetTokens {
+            // The budget shares the output allowance with the answer, so a
+            // budget at or above `max_tokens` leaves nothing to answer with.
+            let cap = body["max_tokens"]?.intValue ?? Int.max
+            let bounded = Swift.max(1024, Swift.min(budget, cap - 1024))
+            body["thinking"] = .object([
+                "type": .string("enabled"),
+                "budget_tokens": .number(Double(bounded)),
+            ])
+        } else if let toggle, let enabled = toggle.enabled {
+            toggle.apply(enabled, to: &body)
+        } else {
+            body["thinking"] = .object(["type": .string("adaptive")])
+        }
+
+        if let effort = plan.effort {
+            // Effort is nested under `output_config`, not top-level.
+            var outputConfig = body["output_config"]?.objectValue ?? [:]
+            outputConfig["effort"] = .string(effort)
+            body["output_config"] = .object(outputConfig)
+        }
+
+        return plan.warnings
     }
 
     // MARK: - Messages

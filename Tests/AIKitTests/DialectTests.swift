@@ -117,7 +117,7 @@ struct DialectTests {
     func rendersReasoningPerDialect() {
         func body(_ providerId: String) -> JSONValue {
             OpenAICompletionsRequest.encode(
-                CallOptions(model: "m", prompt: [.user("hi")], reasoningEffort: "high"),
+                CallOptions(model: "m", prompt: [.user("hi")], thinking: .level(.high)),
                 dialect: .forProvider(providerId)
             ).body
         }
@@ -131,16 +131,132 @@ struct DialectTests {
         #expect(body("ollama")["chat_template_kwargs"]?["enable_thinking"]?.boolValue == true)
     }
 
+    @Test("turning thinking off renders into each vendor's own shape")
+    func rendersThinkingOffPerDialect() {
+        // The half of the problem that a "reasoning effort" field cannot
+        // express: providers that think by default have to be told not to.
+        func body(_ providerId: String) -> JSONValue {
+            OpenAICompletionsRequest.encode(
+                CallOptions(model: "m", prompt: [.user("hi")], thinking: .off),
+                dialect: .forProvider(providerId)
+            ).body
+        }
+
+        #expect(body("deepseek")["thinking"]?["type"]?.stringValue == "disabled")
+        #expect(body("zai")["thinking"]?["type"]?.stringValue == "disabled")
+        #expect(body("qwen")["enable_thinking"]?.boolValue == false)
+        #expect(body("qwen")["thinking_budget"]?.intValue == 0)
+        #expect(body("ollama")["chat_template_kwargs"]?["enable_thinking"]?.boolValue == false)
+        #expect(body("openrouter")["reasoning"]?["enabled"]?.boolValue == false)
+    }
+
+    @Test("off is expressed as an effort only where the model has a word for it")
+    func offEffortFollowsTheModelVocabulary() {
+        // `reasoning_effort: "none"` is a 400 on a model whose vocabulary
+        // stops at `low`, so absence of the field is the only safe off.
+        let none = ModelInfo(
+            id: "m",
+            reasoning: .init(supported: true, default: true),
+            reasoningOptions: [.init(type: "effort", values: ["none", "low", "high"])]
+        )
+        let bounded = ModelInfo(
+            id: "m",
+            reasoning: .init(supported: true, default: false),
+            reasoningOptions: [.init(type: "effort", values: ["low", "medium", "high"])]
+        )
+        let options = CallOptions(model: "m", prompt: [.user("hi")], thinking: .off)
+
+        #expect(
+            OpenAICompletionsRequest.encode(options, model: none, dialect: .default)
+                .body["reasoning_effort"]?.stringValue == "none"
+        )
+        #expect(
+            OpenAICompletionsRequest.encode(options, model: bounded, dialect: .default)
+                .body["reasoning_effort"] == nil
+        )
+    }
+
+    @Test("a model that always thinks warns instead of sending a rejected disable")
+    func warnsWhenThinkingCannotBeDisabled() {
+        // Reasoning-only models exist; asking one to stop is a request the
+        // provider would reject, so it is dropped and reported.
+        let alwaysThinks = ModelInfo(
+            id: "m",
+            reasoning: .init(supported: true, default: true),
+            reasoningOptions: [.init(type: "effort", values: ["low", "medium", "high"])]
+        )
+
+        let encoded = OpenAICompletionsRequest.encode(
+            CallOptions(model: "m", prompt: [.user("hi")], thinking: .off),
+            model: alwaysThinks,
+            dialect: .forProvider("deepseek")
+        )
+
+        #expect(encoded.warnings.contains { $0.setting == "thinking" })
+        #expect(encoded.body["thinking"] == nil)
+    }
+
+    @Test("a requested level is clamped to the model's own vocabulary")
+    func clampsLevelToSupportedEfforts() {
+        func effort(_ level: ThinkingLevel, values: [String]) -> String? {
+            OpenAICompletionsRequest.encode(
+                CallOptions(model: "m", prompt: [.user("hi")], thinking: .level(level)),
+                model: ModelInfo(
+                    id: "m",
+                    reasoning: .init(supported: true),
+                    reasoningOptions: [.init(type: "effort", values: values)]
+                ),
+                dialect: .default
+            ).body["reasoning_effort"]?.stringValue
+        }
+
+        // `max` on a model that stops at `high` is `high`, not a 400.
+        #expect(effort(.max, values: ["low", "medium", "high"]) == "high")
+        #expect(effort(.minimal, values: ["low", "medium", "high"]) == "low")
+        #expect(effort(.medium, values: ["high", "max"]) == "high")
+        // Never `none`: asking to think harder must not turn thinking off.
+        #expect(effort(.low, values: ["none", "medium", "high"]) == "medium")
+    }
+
     @Test("a provider with no reasoning control warns instead of guessing")
     func warnsWhenReasoningUnsupported() {
         let encoded = OpenAICompletionsRequest.encode(
-            CallOptions(model: "m", prompt: [.user("hi")], reasoningEffort: "high"),
+            CallOptions(model: "m", prompt: [.user("hi")], thinking: .level(.high)),
             dialect: .forProvider("minimax")
         )
 
-        #expect(encoded.warnings.contains { $0.setting == "reasoningEffort" })
+        #expect(encoded.warnings.contains { $0.setting == "thinking" })
         #expect(encoded.body["reasoning_effort"] == nil)
         #expect(encoded.body["thinking"] == nil)
+    }
+
+    @Test("a provider-level toggle overrides the protocol's own spelling")
+    func honoursProviderReasoningToggle() {
+        // MiniMax speaks Anthropic but renames the values; the catalog carries
+        // the rename, so no branch is needed here.
+        let toggle = ProviderInfo.ReasoningToggle(
+            field: "thinking.type", enabled: "adaptive", disabled: "disabled"
+        )
+
+        let on = AnthropicMessagesRequest.encode(
+            CallOptions(model: "m", prompt: [.user("hi")], thinking: .on),
+            reasoningToggle: toggle
+        ).body
+        #expect(on["thinking"]?["type"]?.stringValue == "adaptive")
+
+        let off = AnthropicMessagesRequest.encode(
+            CallOptions(model: "m", prompt: [.user("hi")], thinking: .off),
+            reasoningToggle: toggle
+        ).body
+        #expect(off["thinking"]?["type"]?.stringValue == "disabled")
+    }
+
+    @Test("the catalog's reasoning toggles all decode")
+    func decodesCatalogReasoningToggles() {
+        let toggles = ProviderCatalog.all.compactMap(\.reasoningToggle)
+
+        #expect(!toggles.isEmpty)
+        #expect(toggles.allSatisfy { !$0.field.isEmpty && $0.disabled != nil })
     }
 
     @Test("no reasoning request means no reasoning field")
@@ -170,7 +286,7 @@ struct DialectTests {
         // point of the layer.
         let deepseek = try AIClient(providerId: "deepseek", configuration: .init(apiKey: "k"))
         let body = deepseek.encode(
-            CallOptions(model: "deepseek-v4-flash", prompt: [.user("hi")], reasoningEffort: "high"),
+            CallOptions(model: "deepseek-v4-flash", prompt: [.user("hi")], thinking: .level(.high)),
             wire: .openAICompletions,
             model: nil
         ).body

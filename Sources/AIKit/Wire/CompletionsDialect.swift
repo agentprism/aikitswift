@@ -26,24 +26,30 @@ public struct CompletionsDialect: Sendable, Hashable {
         case maxCompletionTokens = "max_completion_tokens"
     }
 
-    /// How a provider expresses "think harder".
+    /// How a provider expresses "think harder" — and, just as importantly,
+    /// "don't think".
     ///
-    /// The single field with the most divergence in the entire ecosystem.
+    /// The single field with the most divergence in the entire ecosystem. Note
+    /// that every format below has *two* shapes, not one: a provider that
+    /// defaults thinking on can only be quieted by sending the off shape, so a
+    /// format that only knows how to enable is half a format.
     public enum ThinkingFormat: String, Sendable, Hashable, CaseIterable {
-        /// `reasoning_effort: "high"` — OpenAI and most followers.
+        /// `reasoning_effort: "high"` / `"none"` — OpenAI and most followers.
         case openai
-        /// `reasoning: { effort: "high" }`.
+        /// `reasoning: { effort: "high" }` / `{ enabled: false }`.
         case openrouter
-        /// `thinking: { type: "enabled" }`, plus effort where supported.
+        /// `thinking: { type: "enabled" | "disabled" }`, plus effort where
+        /// supported.
         case deepseek
-        /// `reasoning: { enabled: true }`, plus effort where supported.
+        /// `reasoning: { enabled: true | false }`, plus effort where supported.
         case together
-        /// `thinking: { type: "enabled" }`.
+        /// `thinking: { type: "enabled" | "disabled" }`.
         case zai
-        /// Top-level `enable_thinking: true`.
+        /// Top-level `enable_thinking: true | false`, plus `thinking_budget`.
         case qwen
-        /// `chat_template_kwargs: { enable_thinking: true }` — self-hosted
-        /// runtimes that pass the flag through to the chat template.
+        /// `chat_template_kwargs: { enable_thinking: true | false }` —
+        /// self-hosted runtimes that pass the flag through to the chat
+        /// template.
         case chatTemplate
         /// The provider has no reasoning control.
         case unsupported
@@ -138,33 +144,88 @@ public struct CompletionsDialect: Sendable, Hashable {
 
     // MARK: - Application
 
-    /// Adds the reasoning request in whichever shape this provider expects.
+    /// Renders a resolved thinking request in whichever shape this provider
+    /// expects, and returns anything that could not be expressed.
     ///
-    /// - Parameter effort: `low`, `medium`, `high`, or similar.
-    func applyThinking(effort: String?, enabled: Bool, to body: inout [String: JSONValue]) {
-        guard enabled else { return }
+    /// - Parameter toggle: a provider-level override from the catalog, which
+    ///   wins over the dialect's own spelling when present.
+    func applyThinking(
+        _ plan: ThinkingPlan,
+        toggle: ProviderInfo.ReasoningToggle? = nil,
+        to body: inout [String: JSONValue]
+    ) -> [Warning] {
+        var warnings = plan.warnings
+
+        if let toggle, let value = plan.enabled ? toggle.enabled : toggle.disabled {
+            guard plan.enabled || plan.canDisable else { return warnings }
+            toggle.apply(value, to: &body)
+            if plan.enabled, let effort = plan.effort {
+                body["reasoning_effort"] = .string(effort)
+            }
+            return warnings
+        }
+
+        guard thinkingFormat != .unsupported else {
+            warnings.append(Warning(
+                message: "This provider has no reasoning-control parameter; the thinking setting was dropped.",
+                setting: "thinking"
+            ))
+            return warnings
+        }
+
+        guard plan.enabled else {
+            // A model that cannot be quieted has already produced a warning;
+            // sending a disable it rejects would only turn that into a 400.
+            guard plan.canDisable else { return warnings }
+
+            switch thinkingFormat {
+            case .openai:
+                // `reasoning_effort: "none"` exists only where the catalog says
+                // so; elsewhere omitting the field *is* the off switch.
+                if let off = plan.offEffort {
+                    body["reasoning_effort"] = .string(off)
+                }
+            case .openrouter:
+                body["reasoning"] = .object(["enabled": .bool(false)])
+            case .deepseek, .zai:
+                body["thinking"] = .object(["type": .string("disabled")])
+            case .together:
+                body["reasoning"] = .object(["enabled": .bool(false)])
+            case .qwen:
+                body["enable_thinking"] = .bool(false)
+                body["thinking_budget"] = .number(0)
+            case .chatTemplate:
+                body["chat_template_kwargs"] = .object(["enable_thinking": .bool(false)])
+            case .unsupported:
+                break
+            }
+            return warnings
+        }
 
         switch thinkingFormat {
         case .openai:
-            if let effort { body["reasoning_effort"] = .string(effort) }
+            if let effort = plan.effort { body["reasoning_effort"] = .string(effort) }
         case .openrouter:
-            var reasoning: [String: JSONValue] = [:]
-            if let effort { reasoning["effort"] = .string(effort) }
+            var reasoning: [String: JSONValue] = ["enabled": .bool(true)]
+            if let effort = plan.effort { reasoning["effort"] = .string(effort) }
             body["reasoning"] = .object(reasoning)
         case .deepseek:
             body["thinking"] = .object(["type": .string("enabled")])
-            if let effort { body["reasoning_effort"] = .string(effort) }
+            if let effort = plan.effort { body["reasoning_effort"] = .string(effort) }
         case .together:
             body["reasoning"] = .object(["enabled": .bool(true)])
-            if let effort { body["reasoning_effort"] = .string(effort) }
+            if let effort = plan.effort { body["reasoning_effort"] = .string(effort) }
         case .zai:
             body["thinking"] = .object(["type": .string("enabled")])
         case .qwen:
             body["enable_thinking"] = .bool(true)
+            if let budget = plan.budgetTokens { body["thinking_budget"] = .number(Double(budget)) }
         case .chatTemplate:
             body["chat_template_kwargs"] = .object(["enable_thinking": .bool(true)])
         case .unsupported:
             break
         }
+
+        return warnings
     }
 }

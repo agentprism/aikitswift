@@ -55,6 +55,38 @@ public enum GoogleGenerativeAIRequest {
         if !options.stopSequences.isEmpty {
             generation["stopSequences"] = .array(options.stopSequences.map(JSONValue.string))
         }
+
+        if let thinking = options.thinking {
+            let plan = thinking.plan(model: model, modelId: options.model)
+            warnings += plan.warnings
+
+            // Gemini splits by generation: 3.x takes a named level, 2.5 takes a
+            // token budget where zero means off. `thinkingConfig` is nested
+            // inside `generationConfig`, not top-level.
+            var thinkingConfig: [String: JSONValue] = [:]
+
+            if plan.enabled {
+                if let effort = plan.effort {
+                    thinkingConfig["thinkingLevel"] = .string(effort)
+                } else if let budget = plan.budgetTokens {
+                    thinkingConfig["thinkingBudget"] = .number(Double(budget))
+                } else {
+                    // Let the model size its own budget.
+                    thinkingConfig["thinkingBudget"] = .number(-1)
+                }
+            } else if plan.canDisable {
+                if let off = plan.offEffort {
+                    thinkingConfig["thinkingLevel"] = .string(off)
+                } else {
+                    thinkingConfig["thinkingBudget"] = .number(0)
+                }
+            }
+
+            if !thinkingConfig.isEmpty {
+                generation["thinkingConfig"] = .object(thinkingConfig)
+            }
+        }
+
         if !generation.isEmpty {
             body["generationConfig"] = .object(generation)
         }

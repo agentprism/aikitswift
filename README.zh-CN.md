@@ -134,6 +134,54 @@ usage.calibrated(toTotal: lastResponse.inputTokens.total ?? 0)
 和比例正确的分段，且零额外网络调用**。只有在发送**之前**就要知道数字时，才需要走 provider
 的 `count_tokens` 端点。
 
+## 思考：既能开，也能关
+
+```swift
+CallOptions(model: "deepseek-v4-flash", prompt: prompt, thinking: .off)
+CallOptions(model: "claude-opus-4-8",   prompt: prompt, thinking: .level(.high))
+```
+
+不设 `thinking` 不等于关掉它。DeepSeek、Qwen、GLM、Gemini Flash **默认开思考**，
+所以字段空着就是在为思考 token 买单——而写一条 commit message 不是推理问题，那些
+token 只是延迟和钱。
+
+关的写法有三种互不兼容，开的写法还有七种：
+
+| | 开 | 关 |
+|---|---|---|
+| OpenAI 系 | `reasoning_effort: "high"` | `reasoning_effort: "none"`——模型词表里有这个词才发 |
+| DeepSeek、Z.ai | `thinking: {type: "enabled"}` | `thinking: {type: "disabled"}` |
+| Qwen | `enable_thinking: true` | `enable_thinking: false`、`thinking_budget: 0` |
+| Ollama、vLLM | `chat_template_kwargs.enable_thinking` | 同上，`false` |
+| Anthropic（4.6+） | `thinking: {type: "adaptive"}` + `output_config.effort` | `thinking: {type: "disabled"}` |
+| Anthropic（4.x） | `thinking: {type: "enabled", budget_tokens: N}` | `thinking: {type: "disabled"}` |
+| Gemini 3 | `thinkingConfig.thinkingLevel` | 该模型的最低档 |
+| Gemini 2.5 | `thinkingConfig.thinkingBudget` | `thinkingBudget: 0` |
+
+`ThinkingLevel` 是归一化的（`minimal` … `max`），按模型裁剪：对只支持到 `high` 的
+模型请求 `.max`，发出去的是 `high`，而不是一个 400。两种情况由 catalog 判断而不是
+瞎猜——**永远思考**的模型（Claude Fable 5、`deepseek-reasoner`）会丢掉这个请求并给出
+warning，而不是发一个会被拒绝的 disable；下限只到 `minimal` 而非静默的模型，会被压到
+下限并说明差别。
+
+## 问端点要模型列表
+
+```swift
+let models = try await client.models()
+```
+
+这个问题 catalog 答不了：Ollama、LM Studio 提供的是本地拉了什么，自建 gateway 提供的
+是运维接了什么。这就是设置面板里的 "Fetch models" 按钮——`GET /models`，三种响应形状：
+`data[].id`、Anthropic 的 `display_name`，以及 Gemini 带路径前缀的 `models/gemini-…`
+（还混着不能对话的 embedding 模型）。catalog 认识的模型会被补全元数据，因为没有哪个
+`/models` 响应带上下文窗口。
+
+catalog 里完全没有的端点：
+
+```swift
+try await AIClient.models(at: url, speaking: .openAICompletions)
+```
+
 ## 安装
 
 ```swift
@@ -141,6 +189,16 @@ usage.calibrated(toTotal: lastResponse.inputTokens.total ?? 0)
 ```
 
 然后 `import AIKit`。Swift 6，macOS 14+、iOS 17+。无依赖。
+
+**打包。** catalog 以 SwiftPM 资源 bundle 的形式分发，名字是
+`AIKitSwift_AIKit.bundle`。自己组装 .app 的话，必须把它一起拷进 `Contents/Resources`
+——`swift build` 过了不能证明打包好的 .app 没问题。AIKit 特意没有用 SwiftPM 生成的
+`Bundle.module`：它在 bundle 缺失时是 `fatalError`。这里改成搜索若干候选位置，于是
+打包失误退化成一个可检测的空 catalog，而不是首次访问时崩溃。
+
+```swift
+guard ProviderCatalog.isLoaded else { fatalError(ProviderCatalog.diagnostics) }
+```
 
 ## 现状
 
@@ -155,6 +213,8 @@ usage.calibrated(toTotal: lastResponse.inputTokens.total ?? 0)
 | OpenAI Responses | ✅ 流式 + 请求 |
 | Google Generative AI | ✅ 流式 + 请求 |
 | Provider catalog | ✅ 49 家、413 模型 |
+| 思考开 / 关 / 分级 | ✅ 全协议 |
+| 在线模型列表（`GET /models`） | ✅ 全协议 |
 | 上下文分摊 | ✅ |
 | 非流式响应 | ✅ 全协议 |
 | Server tool 结果（代码执行 / MCP / 联网搜索） | ✅ 全协议 |

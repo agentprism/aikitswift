@@ -10,10 +10,13 @@ public enum OpenAICompletionsRequest {
     /// - Parameter dialect: how this provider deviates from the reference
     ///   API. Defaults to the conservative baseline; pass
     ///   ``CompletionsDialect/forProvider(_:)`` for a catalog provider.
+    /// - Parameter reasoningToggle: a provider-level override for how thinking
+    ///   is switched on and off, from the catalog.
     public static func encode(
         _ options: CallOptions,
         model: ModelInfo? = nil,
-        dialect: CompletionsDialect = .default
+        dialect: CompletionsDialect = .default,
+        reasoningToggle: ProviderInfo.ReasoningToggle? = nil
     ) -> EncodedRequest {
         var body: [String: JSONValue] = [
             "model": .string(options.model),
@@ -41,16 +44,14 @@ public enum OpenAICompletionsRequest {
         }
 
         // Rendered into whichever shape this vendor expects — there are at
-        // least seven incompatible ones in the catalog.
-        if options.reasoningEffort != nil || (model?.reasoning?.default ?? false) {
-            if dialect.thinkingFormat == .unsupported {
-                warnings.append(Warning(
-                    message: "\(options.model) has no reasoning-control parameter; dropped.",
-                    setting: "reasoningEffort"
-                ))
-            } else {
-                dialect.applyThinking(effort: options.reasoningEffort, enabled: true, to: &body)
-            }
+        // least seven incompatible ones in the catalog, and each has both an
+        // on and an off spelling.
+        if let thinking = options.thinking {
+            warnings += dialect.applyThinking(
+                thinking.plan(model: model, modelId: options.model),
+                toggle: reasoningToggle,
+                to: &body
+            )
         }
 
         if !options.tools.isEmpty {

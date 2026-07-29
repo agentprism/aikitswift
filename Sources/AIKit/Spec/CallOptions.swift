@@ -34,14 +34,16 @@ public struct CallOptions: Sendable {
     /// A JSON Schema the response must conform to, where supported.
     public var responseFormat: JSONValue?
 
-    /// How hard the model should think — `low`, `medium`, `high`, and on some
-    /// models `xhigh` or `max`.
+    /// Whether the model should think, and how hard.
     ///
     /// Normalized because the request shape for this differs more across
-    /// providers than any other single setting. Each dialect renders it into
-    /// whatever that vendor expects; setting it is `nil` leaves reasoning at
-    /// the model's default.
-    public var reasoningEffort: String?
+    /// providers than any other single setting, and because *off* is not the
+    /// same as unset: leaving this `nil` accepts the model's default, which on
+    /// DeepSeek, Qwen, GLM and Gemini Flash means thinking. For work that is
+    /// not a reasoning problem — writing a commit message, classifying a
+    /// string — ``Thinking/off`` is the setting that saves the latency and the
+    /// tokens.
+    public var thinking: Thinking?
 
     /// Escape hatch for anything vendor-specific, namespaced by provider id.
     ///
@@ -61,7 +63,7 @@ public struct CallOptions: Sendable {
         topP: Double? = nil,
         topK: Int? = nil,
         responseFormat: JSONValue? = nil,
-        reasoningEffort: String? = nil,
+        thinking: Thinking? = nil,
         providerOptions: ProviderMetadata = [:]
     ) {
         self.model = model
@@ -74,8 +76,15 @@ public struct CallOptions: Sendable {
         self.topP = topP
         self.topK = topK
         self.responseFormat = responseFormat
-        self.reasoningEffort = reasoningEffort
+        self.thinking = thinking
         self.providerOptions = providerOptions
+    }
+
+    /// The requested depth as a bare effort string.
+    @available(*, deprecated, renamed: "thinking")
+    public var reasoningEffort: String? {
+        get { thinking?.level?.rawValue }
+        set { thinking = newValue.flatMap(Thinking.init(setting:)) }
     }
 
     /// Options this provider should merge into the request body.

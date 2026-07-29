@@ -56,6 +56,22 @@ public enum OpenAIResponsesRequest {
             ))
         }
 
+        if let thinking = options.thinking {
+            // One nested field carries both directions here: an effort of
+            // `none` is how a reasoning model is told not to reason. Models
+            // whose vocabulary lacks it cannot be quieted, and say so.
+            let plan = thinking.plan(model: model, modelId: options.model)
+            warnings += plan.warnings
+
+            if plan.enabled {
+                if let effort = plan.effort {
+                    body["reasoning"] = .object(["effort": .string(effort)])
+                }
+            } else if plan.canDisable, let off = plan.offEffort {
+                body["reasoning"] = .object(["effort": .string(off)])
+            }
+        }
+
         for (key, value) in options.options(for: "openai") {
             body[key] = value
         }

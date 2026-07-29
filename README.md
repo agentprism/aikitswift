@@ -143,6 +143,58 @@ gives an exact total with proportionally-correct segments and no extra network c
 Reach for a provider's `count_tokens` endpoint only when the figure is needed
 *before* sending.
 
+## Thinking, in both directions
+
+```swift
+CallOptions(model: "deepseek-v4-flash", prompt: prompt, thinking: .off)
+CallOptions(model: "claude-opus-4-8",   prompt: prompt, thinking: .level(.high))
+```
+
+Leaving `thinking` unset is not the same as turning it off. DeepSeek, Qwen, GLM
+and Gemini Flash reason **by default**, so an unset field buys thinking tokens
+whether the task needs them or not — and writing a commit message is not a
+reasoning problem, it is latency and money.
+
+Off has three incompatible spellings on the wire, and enabling has seven more:
+
+| | on | off |
+|---|---|---|
+| OpenAI-style | `reasoning_effort: "high"` | `reasoning_effort: "none"` — where the model has the word |
+| DeepSeek, Z.ai | `thinking: {type: "enabled"}` | `thinking: {type: "disabled"}` |
+| Qwen | `enable_thinking: true` | `enable_thinking: false`, `thinking_budget: 0` |
+| Ollama, vLLM | `chat_template_kwargs.enable_thinking` | same, `false` |
+| Anthropic (4.6+) | `thinking: {type: "adaptive"}` + `output_config.effort` | `thinking: {type: "disabled"}` |
+| Anthropic (4.x) | `thinking: {type: "enabled", budget_tokens: N}` | `thinking: {type: "disabled"}` |
+| Gemini 3 | `thinkingConfig.thinkingLevel` | its lowest level |
+| Gemini 2.5 | `thinkingConfig.thinkingBudget` | `thinkingBudget: 0` |
+
+`ThinkingLevel` is normalized (`minimal` … `max`) and clamped per model: `.max`
+against a model that stops at `high` sends `high`, not a 400. Two cases the
+catalog resolves rather than guessing — a model that *always* thinks (Claude
+Fable 5, `deepseek-reasoner`) drops the request and warns instead of sending a
+disable the API rejects, and a model whose floor is `minimal` rather than
+silence is taken to its floor and says so.
+
+## Asking an endpoint what it serves
+
+```swift
+let models = try await client.models()
+```
+
+The catalog cannot answer this for everyone: Ollama and LM Studio serve whatever
+was pulled locally, and a gateway serves whatever its operator wired up. That is
+the "Fetch models" button, and it is `GET /models` in three response shapes —
+`data[].id`, Anthropic's `display_name`, and Gemini's path-qualified
+`models/gemini-…` mixed in with embedding models that cannot serve a chat turn.
+Results are enriched from the catalog where it knows the model, since no
+`/models` response carries a context window.
+
+For an endpoint with no catalog entry at all:
+
+```swift
+try await AIClient.models(at: url, speaking: .openAICompletions)
+```
+
 ## Install
 
 ```swift
@@ -150,6 +202,18 @@ Reach for a provider's `count_tokens` endpoint only when the figure is needed
 ```
 
 Then `import AIKit`. Swift 6, macOS 14+, iOS 17+. No dependencies.
+
+**Packaging.** The catalog ships as a SwiftPM resource bundle,
+`AIKitSwift_AIKit.bundle`. An app that assembles its own bundle must copy it
+into `Contents/Resources` — `swift build` passing proves nothing about the
+packaged `.app`. AIKit deliberately does not use SwiftPM's generated
+`Bundle.module`, which calls `fatalError` when the bundle is missing: it
+searches the plausible locations instead, so a packaging mistake degrades to an
+empty catalog you can detect rather than a crash on first access.
+
+```swift
+guard ProviderCatalog.isLoaded else { fatalError(ProviderCatalog.diagnostics) }
+```
 
 ## Status
 
@@ -165,6 +229,8 @@ all five protocols; the catalog covers 49 providers.
 | OpenAI Responses | ✅ stream + request |
 | Google Generative AI | ✅ stream + request |
 | Provider catalog | ✅ 49 providers, 413 models |
+| Thinking on / off / level | ✅ all protocols |
+| Live model listing (`GET /models`) | ✅ all protocols |
 | Context attribution | ✅ |
 | Non-streaming responses | ✅ all protocols |
 | Server-tool results (code exec, MCP, web search) | ✅ all protocols |

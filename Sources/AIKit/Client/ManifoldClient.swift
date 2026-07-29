@@ -163,7 +163,11 @@ public struct AIClient: Sendable {
     func encode(_ options: CallOptions, wire: WireProtocol, model: ModelInfo?) -> EncodedRequest {
         switch wire {
         case .anthropicMessages:
-            AnthropicMessagesRequest.encode(options, model: model)
+            AnthropicMessagesRequest.encode(
+                options,
+                model: model,
+                reasoningToggle: provider.reasoningToggle
+            )
         case .openAICompletions:
             // The dialect is selected from the provider, not the protocol:
             // thirty-eight providers share this encoder and disagree about the
@@ -171,7 +175,8 @@ public struct AIClient: Sendable {
             OpenAICompletionsRequest.encode(
                 options,
                 model: model,
-                dialect: .forProvider(provider.id)
+                dialect: .forProvider(provider.id),
+                reasoningToggle: provider.reasoningToggle
             )
         case .openAIResponses, .openAICodex:
             OpenAIResponsesRequest.encode(options, model: model)
@@ -202,7 +207,7 @@ public struct AIClient: Sendable {
         return request
     }
 
-    private func resolveBaseURL() throws -> URL {
+    func resolveBaseURL() throws -> URL {
         if let baseURL = configuration.baseURL { return baseURL }
         guard let api = provider.api, let url = URL(string: api) else {
             throw AIClientError(kind: .missingBaseURL(provider.id))
