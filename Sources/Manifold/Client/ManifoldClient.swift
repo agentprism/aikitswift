@@ -1,0 +1,221 @@
+import Foundation
+
+#if canImport(FoundationNetworking)
+import FoundationNetworking
+#endif
+
+/// Something went wrong before the stream produced any content.
+public struct ManifoldError: Error, Sendable, CustomStringConvertible {
+    public enum Kind: Sendable {
+        /// The provider is not in the catalog.
+        case unknownProvider(String)
+        /// The provider's adapter has no implementation here.
+        case unsupportedProtocol(String)
+        /// No base URL, from the catalog or the configuration.
+        case missingBaseURL(String)
+        /// The provider returned a non-2xx status.
+        case http(status: Int, body: String)
+    }
+
+    public var kind: Kind
+
+    public var description: String {
+        switch kind {
+        case .unknownProvider(let id):
+            "Unknown provider '\(id)'. Check ProviderCatalog.all for available ids."
+        case .unsupportedProtocol(let adapter):
+            "Provider speaks '\(adapter)', which Manifold does not implement yet."
+        case .missingBaseURL(let id):
+            "Provider '\(id)' has no base URL; supply one in the configuration."
+        case .http(let status, let body):
+            "Provider returned HTTP \(status): \(body)"
+        }
+    }
+}
+
+/// Sends a request to a provider and returns a normalized event stream.
+///
+/// The client is thin on purpose. It resolves which protocol a provider speaks,
+/// encodes the request, opens the connection, and feeds bytes through the
+/// matching mapper. Everything interesting lives in the wire layer; this is the
+/// plumbing that connects it to a socket.
+public struct ManifoldClient: Sendable {
+
+    public struct Configuration: Sendable {
+        public var apiKey: String?
+        /// Overrides the catalog's base URL. Required for providers that have
+        /// none — self-hosted gateways, local runtimes.
+        public var baseURL: URL?
+        /// Merged into every request, and applied last so they can override.
+        public var extraHeaders: [String: String]
+
+        public init(apiKey: String? = nil, baseURL: URL? = nil, extraHeaders: [String: String] = [:]) {
+            self.apiKey = apiKey
+            self.baseURL = baseURL
+            self.extraHeaders = extraHeaders
+        }
+    }
+
+    public var provider: ProviderInfo
+    public var configuration: Configuration
+    public var session: URLSession
+
+    public init(provider: ProviderInfo, configuration: Configuration, session: URLSession = .shared) {
+        self.provider = provider
+        self.configuration = configuration
+        self.session = session
+    }
+
+    /// Looks the provider up in the bundled catalog.
+    public init(
+        providerId: String,
+        configuration: Configuration,
+        session: URLSession = .shared
+    ) throws {
+        guard let provider = ProviderCatalog.provider(providerId) else {
+            throw ManifoldError(kind: .unknownProvider(providerId))
+        }
+        self.init(provider: provider, configuration: configuration, session: session)
+    }
+
+    // MARK: - Streaming
+
+    /// Sends a request and yields normalized events as they arrive.
+    public func stream(_ options: CallOptions) throws -> AsyncThrowingStream<StreamPart, any Error> {
+        guard let wire = provider.wireProtocol else {
+            throw ManifoldError(kind: .unsupportedProtocol(provider.adapter ?? "none"))
+        }
+
+        let model = provider.model(options.model)
+        let encoded = encode(options, wire: wire, model: model)
+        let request = try makeRequest(wire: wire, options: options, body: encoded.body)
+
+        let session = self.session
+
+        return AsyncThrowingStream { continuation in
+            let task = Task {
+                do {
+                    // Warnings come from encoding, so the client emits
+                    // `stream-start` itself and suppresses the mapper's. The
+                    // contract stays: exactly one, first, carrying warnings.
+                    continuation.yield(.streamStart(warnings: encoded.warnings))
+
+                    let (bytes, response) = try await session.bytes(for: request)
+
+                    if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
+                        // The body holds the provider's error detail, which is
+                        // the only useful thing about a failed request.
+                        var detail = ""
+                        for try await line in bytes.lines { detail += line }
+                        throw ManifoldError(kind: .http(status: http.statusCode, body: detail))
+                    }
+
+                    var mapper = wire.makeMapper()
+
+                    for try await event in sseEvents(from: bytes) {
+                        for part in mapper.map(rawJSON: event.data) {
+                            if case .streamStart = part { continue }
+                            continuation.yield(part)
+                        }
+                    }
+
+                    // Several protocols carry final usage nowhere else, so this
+                    // runs even when the connection ended without a sentinel.
+                    for part in mapper.finish() {
+                        if case .streamStart = part { continue }
+                        continuation.yield(part)
+                    }
+
+                    continuation.finish()
+                } catch {
+                    continuation.finish(throwing: error)
+                }
+            }
+            continuation.onTermination = { _ in task.cancel() }
+        }
+    }
+
+    // MARK: - Request construction
+
+    func encode(_ options: CallOptions, wire: WireProtocol, model: ModelInfo?) -> EncodedRequest {
+        switch wire {
+        case .anthropicMessages:
+            AnthropicMessagesRequest.encode(options, model: model)
+        case .openAICompletions:
+            OpenAICompletionsRequest.encode(options, model: model)
+        case .openAIResponses, .openAICodex:
+            OpenAIResponsesRequest.encode(options, model: model)
+        case .googleGenerativeAI:
+            GoogleGenerativeAIRequest.encode(options, model: model)
+        }
+    }
+
+    func makeRequest(wire: WireProtocol, options: CallOptions, body: JSONValue) throws -> URLRequest {
+        let base = try resolveBaseURL()
+        var request = URLRequest(url: endpoint(wire: wire, base: base, model: options.model))
+
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "content-type")
+        request.setValue("text/event-stream", forHTTPHeaderField: "accept")
+
+        for (name, value) in authHeaders(wire: wire) {
+            request.setValue(value, forHTTPHeaderField: name)
+        }
+        for (name, value) in configuration.extraHeaders {
+            request.setValue(value, forHTTPHeaderField: name)
+        }
+
+        // Sorted keys: prompt caching is a byte-level prefix match, so an
+        // unstable key order silently destroys every cache hit.
+        request.httpBody = Data((try? body.encodedString())?.utf8 ?? "{}".utf8)
+
+        return request
+    }
+
+    private func resolveBaseURL() throws -> URL {
+        if let baseURL = configuration.baseURL { return baseURL }
+        guard let api = provider.api, let url = URL(string: api) else {
+            throw ManifoldError(kind: .missingBaseURL(provider.id))
+        }
+        return url
+    }
+
+    func endpoint(wire: WireProtocol, base: URL, model: String) -> URL {
+        // Catalog base URLs are inconsistent about including a version prefix,
+        // so it is added only when absent.
+        func path(_ versioned: String, _ bare: String) -> String {
+            base.path.hasSuffix("/\(versioned)") ? bare : "\(versioned)/\(bare)"
+        }
+
+        switch wire {
+        case .anthropicMessages:
+            return base.appending(path: path("v1", "messages"))
+        case .openAICompletions:
+            return base.appending(path: path("v1", "chat/completions"))
+        case .openAIResponses, .openAICodex:
+            return base.appending(path: path("v1", "responses"))
+        case .googleGenerativeAI:
+            // Gemini names the model in the path and needs an explicit opt-in
+            // to Server-Sent Events; without `alt=sse` it streams a JSON array.
+            let url = base.appending(path: path("v1beta", "models/\(model):streamGenerateContent"))
+            return URL(string: "\(url.absoluteString)?alt=sse") ?? url
+        }
+    }
+
+    func authHeaders(wire: WireProtocol) -> [String: String] {
+        guard let key = configuration.apiKey else { return [:] }
+
+        switch wire {
+        case .anthropicMessages:
+            return [
+                "x-api-key": key,
+                // Required on every request; omitting it is a 400.
+                "anthropic-version": "2023-06-01",
+            ]
+        case .openAICompletions, .openAIResponses, .openAICodex:
+            return ["authorization": "Bearer \(key)"]
+        case .googleGenerativeAI:
+            return ["x-goog-api-key": key]
+        }
+    }
+}

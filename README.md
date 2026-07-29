@@ -2,14 +2,21 @@
 
 Many LLM wire formats in, one normalized event stream out. Written in Swift, for Swift.
 
+[简体中文](README.zh-CN.md)
+
 A manifold is the fitting that merges several inlets into a single outlet. That is
-the whole job: Anthropic's Messages API, OpenAI's Completions and Responses APIs,
-Google's Generative AI API and the rest all describe the same conversation in
-mutually incompatible ways. Manifold maps them onto one event stream, so an app is
-written once instead of once per vendor.
+the whole job: Anthropic's Messages API, OpenAI's Completions and Responses APIs and
+Google's Generative AI API all describe the same conversation in mutually
+incompatible ways. Manifold maps them onto one event stream, so an app is written
+once instead of once per vendor.
 
 ```swift
-for try await part in stream {
+let client = try ManifoldClient(providerId: "deepseek", configuration: .init(apiKey: key))
+
+for try await part in try client.stream(CallOptions(model: "deepseek-v4-flash", prompt: [
+    .system("You are terse."),
+    .user("Weather in Paris?"),
+])) {
     switch part {
     case .textDelta(_, let delta, _):      render(delta)
     case .reasoningDelta(_, let delta, _): renderThinking(delta)
@@ -20,22 +27,122 @@ for try await part in stream {
 }
 ```
 
-That loop does not change when the provider does.
+Change `"deepseek"` to `"anthropic"`, `"google"` or any of the other 46 providers.
+Nothing else in that loop changes.
 
-## Status
+## The idea: protocols, not providers
 
-Early. The Anthropic Messages protocol is implemented and conformance-tested; other
-protocols are not written yet. The API will change.
+The mistake to avoid is writing one implementation per vendor. The bundled catalog
+holds **49 providers and 413 models — but only 5 wire protocols**, because most
+providers speak someone else's:
 
-| | |
+| Protocol | Providers |
 |---|---|
-| Normalized event spec | ✅ |
-| SSE framing | ✅ |
-| Anthropic Messages protocol | ✅ streaming |
-| OpenAI Completions / Responses | ⬜ |
-| Google Generative AI | ⬜ |
-| Provider catalog | ⬜ |
-| Request building | ⬜ (responses only, so far) |
+| OpenAI Chat Completions | 38 |
+| Anthropic Messages | 7 |
+| OpenAI Responses | 2 |
+| OpenAI Codex | 1 |
+| Google Generative AI | 1 |
+
+Manifold splits along that seam:
+
+```
+Sources/Manifold/
+  Spec/        the normalized vocabulary — one enum every provider maps onto
+  Wire/        one implementation per protocol   (5, the real work)
+  Providers/   the catalog                       (49 JSON configs, pure data)
+  Tokens/      context attribution
+  Client/      the plumbing between them
+```
+
+A provider is data: a base URL, an auth method, a model list, and the `adapter`
+naming the protocol it speaks. Adding one is a config file, not an implementation —
+and it needs no new wire tests, because the protocol it points at is already covered.
+
+That factoring is borrowed from [pi-ai][pi] and the [dim-agent][dim] catalog, which
+arrived at it independently. The counter-example is worth naming too: a well-known
+Swift LLM client keeps its provider layer in a single 6,000-line file, and supports
+fewer formats for it.
+
+## Testing without API keys
+
+Every provider integration faces the same problem: you cannot test what you cannot
+call, and nobody holds keys for forty-nine vendors.
+
+Manifold sidesteps it. The suite replays **97 recorded provider responses** captured
+from real API calls — vendored from the [AI SDK][aisdk] under MIT — and asserts the
+normalized stream is well-formed. Recorded bytes in, expected events out. No
+network, no credentials, no account.
+
+```
+$ swift test
+Test run with 100 tests in 10 suites passed
+```
+
+Fixtures are grouped by **protocol**, not vendor, so the Chat Completions mapper is
+validated against real traffic from seven vendors at once:
+
+| Set | Recordings |
+|---|---|
+| `anthropic` | 27 |
+| `openai-responses` | 29 |
+| `google` | 20 |
+| `xai` | 7 |
+| `deepseek`, `groq`, `mistral` | 3 each |
+| `openai-completions`, `openai-compatible` | 2 each |
+| `cerebras` | 1 |
+
+Invariants checked on every recording:
+
+- text, reasoning and tool-input blocks form balanced `start → delta* → end` triads
+- assembled tool-call arguments parse as JSON — fragments arrive individually
+  invalid, so reassembly being off by one character is a real and silent failure
+- `finish` appears exactly once, last, with internally consistent usage
+- unrecognized chunks surface as `.raw` rather than vanishing, so a provider can
+  ship a new event type without this library losing data
+
+Refresh with `Scripts/sync-fixtures.sh`. A diff there is the earliest available
+signal that a provider changed its wire format.
+
+Beyond fixtures, an Anthropic-compatible local server such as [Osaurus][osaurus]
+gives real end-to-end coverage over a real socket, also without keys.
+
+## Context attribution
+
+Where a request's tokens went, and how much window is left:
+
+```swift
+let usage = ContextReporter().report(
+    options,
+    contextWindow: ProviderCatalog.model("claude-opus-4-8")?.1.contextWindow,
+    extras: [("Skills", 5_500), ("Memory files", 284)]
+)
+
+for entry in usage.entries {
+    print(entry.segment.label, ContextUsage.format(entry.tokens),
+          String(format: "%.1f%%", usage.share(of: entry) * 100))
+}
+// Messages       463.4k  46.3%
+// System prompt    6.1k   0.6%
+// Skills           5.5k   0.6%
+// Memory files      284   0.0%
+```
+
+Attribution is provider-independent; only counting is provider-specific, so the
+tokenizer is injected. The default estimator is script-aware — Latin text runs about
+four characters per token while CJK runs closer to one, and a uniform `characters/4`
+rule under-counts Chinese by roughly fourfold.
+
+For an exact total, don't pay for it twice:
+
+```swift
+usage.calibrated(toTotal: lastResponse.inputTokens.total ?? 0)
+```
+
+The previous response's usage is authoritative and already paid for. Anchoring to it
+gives an exact total with proportionally-correct segments and no extra network call.
+Reach for a provider's `count_tokens` endpoint only when the figure is needed
+*before* sending.
 
 ## Install
 
@@ -45,89 +152,24 @@ protocols are not written yet. The API will change.
 
 Swift 6, macOS 14+, iOS 17+. No dependencies.
 
-## Use
+## Status
 
-Manifold currently handles the response half: you build the request, it normalizes
-what comes back.
+Early, and the API will change. Streaming responses and request encoding work across
+all five protocols; the catalog covers 49 providers.
 
-```swift
-import Manifold
-
-var request = URLRequest(url: URL(string: "https://api.anthropic.com/v1/messages")!)
-request.httpMethod = "POST"
-request.setValue(apiKey, forHTTPHeaderField: "x-api-key")
-request.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
-request.setValue("application/json", forHTTPHeaderField: "content-type")
-request.httpBody = body   // your request JSON, with "stream": true
-
-let (bytes, _) = try await URLSession.shared.bytes(for: request)
-
-var wire = AnthropicMessagesWire()
-for try await event in sseEvents(from: bytes) {
-    for part in wire.map(rawJSON: event.data) {
-        handle(part)
-    }
-}
-```
-
-One `AnthropicMessagesWire` per response — it is a state machine over a single
-stream, not a long-lived client.
-
-## The idea: protocols, not providers
-
-The mistake to avoid is writing one implementation per vendor. There are roughly
-forty providers worth supporting and only about eight wire formats between them,
-because most providers speak someone else's protocol. Manifold splits along that
-seam:
-
-```
-Sources/Manifold/
-  Spec/        the normalized vocabulary — one enum every provider maps onto
-  Wire/        one implementation per protocol   (~8, the real work)
-  Providers/   one small config per provider     (~40, base URL + auth + models)
-```
-
-A provider is data: a base URL, an auth method, a model list, and a pointer to the
-protocol it speaks. Adding one is a config file, not an implementation — and needs
-no new wire tests, because the protocol it points at is already covered.
-
-That factoring is borrowed from [pi-ai][pi], which arrived at it independently. The
-counter-example is worth naming too: a well-known Swift LLM client keeps its
-provider layer in a single 6,000-line file, and supports fewer formats for it.
-
-## Testing without API keys
-
-Every provider integration faces the same problem: you cannot test what you cannot
-call, and nobody holds keys for forty vendors.
-
-Manifold sidesteps it. The test suite replays **27 recorded provider responses**
-captured from real API calls — vendored from the [AI SDK][aisdk] under MIT — and
-asserts the normalized stream is well-formed. Recorded bytes in, expected events
-out. No network, no credentials, no account.
-
-```
-$ swift test
-Test run with 31 tests in 3 suites passed
-```
-
-The invariants checked on every recorded stream:
-
-- text, reasoning and tool-input blocks form balanced `start → delta* → end` triads
-- assembled tool-call arguments parse as JSON — fragments arrive individually
-  invalid, so reassembly being off by one character is a real and silent failure
-- `finish` appears exactly once, last, with internally consistent usage
-- unrecognized chunks surface as `.raw` rather than vanishing, so a provider can
-  ship a new event type without this library losing data
-
-The fixtures cover the parts of the protocol that are easy to get wrong and hard to
-discover: compaction, context editing, server-side tools, MCP, code execution,
-fallbacks, and reasoning with signatures.
-
-Refresh them with `Scripts/sync-fixtures.sh`. A diff there is the earliest available
-signal that a provider changed its wire format.
-
-Beyond fixtures, an Anthropic-compatible local server such as [Osaurus][osaurus]
-gives real end-to-end coverage over a real socket, also without keys.
+| | |
+|---|---|
+| Normalized event spec | ✅ |
+| SSE framing | ✅ |
+| Anthropic Messages | ✅ stream + request |
+| OpenAI Chat Completions | ✅ stream + request |
+| OpenAI Responses | ✅ stream + request |
+| Google Generative AI | ✅ stream + request |
+| Provider catalog | ✅ 49 providers, 413 models |
+| Context attribution | ✅ |
+| Non-streaming responses | ⬜ |
+| Server-tool results (code exec, MCP, web search) | ⬜ surfaced as `.raw` |
+| OAuth flows | ⬜ |
 
 ## Design notes
 
@@ -139,6 +181,22 @@ conformance suite, and its design review comes for free.
 **Nothing is discarded.** Provider-specific detail that has no normalized home is
 carried in `providerMetadata`, namespaced by provider. Unknown chunks pass through as
 `.raw`. Raw usage payloads are preserved so a bill can be audited.
+
+**Usage conventions disagree, and each one is encoded.** Three providers, three
+different meanings for the same idea:
+
+| | includes cached input? | includes reasoning in output? |
+|---|---|---|
+| Anthropic | no — add the cache legs back | n/a |
+| OpenAI | yes — subtract to get uncached | yes — subtract to get text |
+| Google | yes | **no** — add thoughts to get the total |
+
+Applying one provider's arithmetic to another misprices silently rather than
+failing. Each convention has its own test.
+
+**Settings that would 400 are dropped and reported.** Newer Anthropic models reject
+`temperature` outright. The catalog knows which, so the encoder drops it and emits a
+`Warning` on `streamStart` instead of letting the request fail.
 
 **Tool inputs stay strings.** `ToolCall.input` is the JSON *text* that streamed in,
 not a parsed object, because re-encoding a parsed value would not reproduce the
@@ -157,16 +215,20 @@ the kind of thing that costs money quietly rather than failing loudly.
   library is tested against. MIT.
 - **[pi-ai][pi]** — the protocol/provider split, and a reminder of how much of a
   provider layer is configuration rather than code.
+- **[dim-agent][dim]** — the provider catalog, including the Chinese providers the
+  Western SDKs omit.
 - **[Osaurus][osaurus]** — Swift-native, and a usable local test target.
 
 ## License
 
 MIT.
 
-Recorded fixtures under `Tests/ManifoldTests/Fixtures/` are vendored from
-[vercel/ai][aisdk] and remain under its MIT license. See
-`Tests/ManifoldTests/Fixtures/anthropic/PROVENANCE.md`.
+Vendored data keeps its upstream license: recorded fixtures under
+`Tests/ManifoldTests/Fixtures/` come from [vercel/ai][aisdk] (MIT), and the provider
+catalog under `Sources/Manifold/Catalog/` from [dim-agent][dim]. See the
+`PROVENANCE.md` in each directory.
 
 [aisdk]: https://github.com/vercel/ai
 [pi]: https://github.com/earendil-works/pi
+[dim]: https://github.com/ThinkInAIXYZ
 [osaurus]: https://github.com/osaurus-ai/osaurus

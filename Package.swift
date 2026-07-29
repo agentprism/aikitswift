@@ -13,6 +13,7 @@ let package = Package(
     targets: [
         .target(
             name: "Manifold",
+            resources: [.copy("Catalog")],
             swiftSettings: [.swiftLanguageMode(.v6)]
         ),
         .testTarget(
