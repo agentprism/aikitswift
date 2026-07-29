@@ -1,6 +1,6 @@
 import Testing
 
-@testable import Manifold
+@testable import AIKit
 
 @Suite("SSE framing")
 struct SSEParserTests {

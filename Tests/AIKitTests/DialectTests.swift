@@ -1,7 +1,7 @@
 import Foundation
 import Testing
 
-@testable import Manifold
+@testable import AIKit
 
 /// "Thirty-eight providers speak Chat Completions" is a simplification. These
 /// tests pin the places where that stops being true.
@@ -168,7 +168,7 @@ struct DialectTests {
     func clientAppliesDialect() throws {
         // Selection is per provider, not per protocol — that is the whole
         // point of the layer.
-        let deepseek = try ManifoldClient(providerId: "deepseek", configuration: .init(apiKey: "k"))
+        let deepseek = try AIClient(providerId: "deepseek", configuration: .init(apiKey: "k"))
         let body = deepseek.encode(
             CallOptions(model: "deepseek-v4-flash", prompt: [.user("hi")], reasoningEffort: "high"),
             wire: .openAICompletions,

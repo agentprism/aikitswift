@@ -1,7 +1,7 @@
 import Foundation
 import Testing
 
-@testable import Manifold
+@testable import AIKit
 
 /// One recorded stream, identified by which fixture set it came from.
 struct FixtureRef: Sendable, CustomStringConvertible {

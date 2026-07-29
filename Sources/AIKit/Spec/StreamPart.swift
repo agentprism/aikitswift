@@ -159,7 +159,7 @@ public struct StreamError: Sendable, Hashable, Error {
 
 /// One normalized event in a model response stream.
 ///
-/// This is the whole point of Manifold: every provider's wire format is mapped
+/// This is the whole point of AIKit: every provider's wire format is mapped
 /// onto this single enum, so callers are written once instead of once per
 /// vendor. The shape follows the AI SDK's `LanguageModelV4StreamPart`, which is
 /// the most battle-tested normalization of this problem in the ecosystem.

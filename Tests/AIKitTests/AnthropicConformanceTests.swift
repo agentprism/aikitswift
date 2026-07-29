@@ -1,7 +1,7 @@
 import Foundation
 import Testing
 
-@testable import Manifold
+@testable import AIKit
 
 /// Replays every recorded Anthropic response through the mapper.
 ///

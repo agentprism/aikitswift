@@ -1,7 +1,7 @@
 import Foundation
 import Testing
 
-@testable import Manifold
+@testable import AIKit
 
 @Suite("Token counting and context attribution")
 struct ContextUsageTests {

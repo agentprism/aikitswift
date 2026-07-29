@@ -1,7 +1,7 @@
 import Foundation
 import Testing
 
-@testable import Manifold
+@testable import AIKit
 
 /// The loopback listener is the one piece of this library that is genuinely
 /// tested end to end: it binds a real socket and a real HTTP request is made

@@ -1,20 +1,20 @@
 import Foundation
 import Testing
 
-@testable import Manifold
+@testable import AIKit
 
 /// Exercises request construction without touching the network.
 @Suite("Client")
 struct ClientTests {
 
-    private func client(_ providerId: String, key: String = "sk-test") throws -> ManifoldClient {
-        try ManifoldClient(providerId: providerId, configuration: .init(apiKey: key))
+    private func client(_ providerId: String, key: String = "sk-test") throws -> AIClient {
+        try AIClient(providerId: providerId, configuration: .init(apiKey: key))
     }
 
     @Test("unknown providers fail with a helpful error")
     func rejectsUnknownProvider() {
-        #expect(throws: ManifoldError.self) {
-            try ManifoldClient(providerId: "not-a-real-provider", configuration: .init())
+        #expect(throws: AIClientError.self) {
+            try AIClient(providerId: "not-a-real-provider", configuration: .init())
         }
     }
 
@@ -78,7 +78,7 @@ struct ClientTests {
     func omitsAuthWithoutKey() throws {
         // Local runtimes and gateways often need none. The Anthropic version
         // header is not a credential and is required regardless, so it stays.
-        let subject = try ManifoldClient(providerId: "anthropic", configuration: .init())
+        let subject = try AIClient(providerId: "anthropic", configuration: .init())
         let headers = subject.authHeaders(wire: .anthropicMessages)
 
         #expect(headers["x-api-key"] == nil)
@@ -110,7 +110,7 @@ struct ClientTests {
 
     @Test("extra headers are applied last so they can override")
     func extraHeadersOverride() throws {
-        let subject = try ManifoldClient(
+        let subject = try AIClient(
             providerId: "anthropic",
             configuration: .init(apiKey: "sk-test", extraHeaders: ["anthropic-version": "2099-01-01"])
         )
@@ -126,7 +126,7 @@ struct ClientTests {
     @Test("a configured base URL overrides the catalog")
     func configuredBaseURLWins() throws {
         // How a local or proxied endpoint is pointed at a catalog provider.
-        let subject = try ManifoldClient(
+        let subject = try AIClient(
             providerId: "openai",
             configuration: .init(apiKey: "k", baseURL: URL(string: "http://localhost:1234")!)
         )

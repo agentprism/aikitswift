@@ -1,7 +1,7 @@
 import Foundation
 import Testing
 
-@testable import Manifold
+@testable import AIKit
 
 @Suite("OAuth")
 struct OAuthTests {
@@ -170,7 +170,7 @@ struct OAuthTests {
         // Converting a working request from a key to a token is a *header*
         // change. Sending a token on `x-api-key` fails as an authentication
         // error that looks like a bad token.
-        let client = try ManifoldClient(
+        let client = try AIClient(
             providerId: "anthropic",
             configuration: .init(authorization: .oauth(OAuthCredential(accessToken: "oat_1")))
         )
@@ -185,7 +185,7 @@ struct OAuthTests {
 
     @Test("an API key still travels as an API key")
     func sendsApiKeyAsKey() throws {
-        let client = try ManifoldClient(
+        let client = try AIClient(
             providerId: "anthropic",
             configuration: .init(apiKey: "sk-1")
         )
@@ -201,7 +201,7 @@ struct OAuthTests {
     func keepsVersionHeaderWithoutAuth() throws {
         // A local Anthropic-compatible server needs no credential but still
         // requires the version header; omitting it is a 400.
-        let client = try ManifoldClient(providerId: "anthropic", configuration: .init())
+        let client = try AIClient(providerId: "anthropic", configuration: .init())
         #expect(client.authHeaders(wire: .anthropicMessages)["anthropic-version"] == "2023-06-01")
         #expect(client.authHeaders(wire: .openAICompletions).isEmpty)
     }

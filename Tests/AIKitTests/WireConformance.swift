@@ -1,7 +1,7 @@
 import Foundation
 import Testing
 
-@testable import Manifold
+@testable import AIKit
 
 /// Invariants every wire protocol must satisfy, regardless of vendor.
 ///

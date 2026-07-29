@@ -1,6 +1,6 @@
 import Testing
 
-@testable import Manifold
+@testable import AIKit
 
 /// Usage arithmetic is the subtlest part of the wire layer: the provider's
 /// top-level totals do not always describe what you were billed for, and every

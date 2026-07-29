@@ -1,17 +1,17 @@
-# Manifold
+# AIKit
 
-Many LLM wire formats in, one normalized event stream out. Written in Swift, for Swift.
+A unified LLM provider layer for Swift. Many wire formats in, one normalized event
+stream out.
 
 [简体中文](README.zh-CN.md)
 
-A manifold is the fitting that merges several inlets into a single outlet. That is
-the whole job: Anthropic's Messages API, OpenAI's Completions and Responses APIs and
-Google's Generative AI API all describe the same conversation in mutually
-incompatible ways. Manifold maps them onto one event stream, so an app is written
-once instead of once per vendor.
+Anthropic's Messages API, OpenAI's Completions and Responses APIs and Google's
+Generative AI API all describe the same conversation in mutually incompatible ways.
+AIKit maps them onto a single event stream — modeled on the Vercel AI SDK's event
+spec — so an app is written once instead of once per vendor.
 
 ```swift
-let client = try ManifoldClient(providerId: "deepseek", configuration: .init(apiKey: key))
+let client = try AIClient(providerId: "deepseek", configuration: .init(apiKey: key))
 
 for try await part in try client.stream(CallOptions(model: "deepseek-v4-flash", prompt: [
     .system("You are terse."),
@@ -44,10 +44,10 @@ providers speak someone else's:
 | OpenAI Codex | 1 |
 | Google Generative AI | 1 |
 
-Manifold splits along that seam:
+AIKit splits along that seam:
 
 ```
-Sources/Manifold/
+Sources/AIKit/
   Spec/        the normalized vocabulary — one enum every provider maps onto
   Wire/        one implementation per protocol   (5, the real work)
   Providers/   the catalog                       (49 JSON configs, pure data)
@@ -68,7 +68,7 @@ provider layer in a single 6,000-line file, and supports fewer formats for it.
 Every provider integration faces the same problem: you cannot test what you cannot
 call, and nobody holds keys for forty-nine vendors.
 
-Manifold sidesteps it. The suite replays **97 recorded streams and 98 complete
+AIKit sidesteps it. The suite replays **97 recorded streams and 98 complete
 response bodies** captured from real API calls — vendored from the [AI SDK][aisdk]
 under MIT — and asserts the normalized output is well-formed. Recorded bytes in,
 expected events out. No network, no credentials, no account.
@@ -146,10 +146,10 @@ Reach for a provider's `count_tokens` endpoint only when the figure is needed
 ## Install
 
 ```swift
-.package(url: "https://github.com/zjywill/manifold.git", branch: "main")
+.package(url: "https://github.com/zjywill/aikitswift.git", branch: "main")
 ```
 
-Swift 6, macOS 14+, iOS 17+. No dependencies.
+Then `import AIKit`. Swift 6, macOS 14+, iOS 17+. No dependencies.
 
 ## Status
 
@@ -239,9 +239,9 @@ the kind of thing that costs money quietly rather than failing loudly.
 
 MIT.
 
-Recorded fixtures under `Tests/ManifoldTests/Fixtures/` are vendored from
+Recorded fixtures under `Tests/AIKitTests/Fixtures/` are vendored from
 [vercel/ai][aisdk] and keep its MIT license — see the `PROVENANCE.md` there. The
-provider catalog under `Sources/Manifold/Catalog/` is vendored data refreshed by
+provider catalog under `Sources/AIKit/Catalog/` is vendored data refreshed by
 `Scripts/sync-catalog.sh`.
 
 [aisdk]: https://github.com/vercel/ai

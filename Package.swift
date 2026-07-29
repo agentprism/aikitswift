@@ -2,23 +2,23 @@
 import PackageDescription
 
 let package = Package(
-    name: "Manifold",
+    name: "AIKitSwift",
     platforms: [
         .macOS(.v14),
         .iOS(.v17),
     ],
     products: [
-        .library(name: "Manifold", targets: ["Manifold"])
+        .library(name: "AIKit", targets: ["AIKit"])
     ],
     targets: [
         .target(
-            name: "Manifold",
+            name: "AIKit",
             resources: [.copy("Catalog")],
             swiftSettings: [.swiftLanguageMode(.v6)]
         ),
         .testTarget(
-            name: "ManifoldTests",
-            dependencies: ["Manifold"],
+            name: "AIKitTests",
+            dependencies: ["AIKit"],
             resources: [.copy("Fixtures")],
             swiftSettings: [.swiftLanguageMode(.v6)]
         ),

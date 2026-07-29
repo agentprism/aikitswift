@@ -1,7 +1,7 @@
 import Foundation
 import Testing
 
-@testable import Manifold
+@testable import AIKit
 
 @Suite("Request encoding")
 struct RequestEncodingTests {

@@ -1,11 +1,11 @@
 import Foundation
 import Testing
 
-@testable import Manifold
+@testable import AIKit
 
 /// Loads recorded provider responses vendored from the AI SDK.
 ///
-/// See `Tests/ManifoldTests/Fixtures/PROVENANCE.md`.
+/// See `Tests/AIKitTests/Fixtures/PROVENANCE.md`.
 enum Fixture {
     struct LoadError: Error, CustomStringConvertible {
         let description: String

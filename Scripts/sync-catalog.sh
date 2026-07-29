@@ -15,18 +15,18 @@
 #   Scripts/sync-catalog.sh <path-to-providers-directory>
 #
 # The source is a directory of per-provider JSON documents. Set
-# MANIFOLD_CATALOG_SRC to avoid passing it every time.
+# AIKIT_CATALOG_SRC to avoid passing it every time.
 
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-SRC="${1:-${MANIFOLD_CATALOG_SRC:-}}"
-DEST="$REPO_ROOT/Sources/Manifold/Catalog/providers"
+SRC="${1:-${AIKIT_CATALOG_SRC:-}}"
+DEST="$REPO_ROOT/Sources/AIKit/Catalog/providers"
 
 if [ -z "$SRC" ] || [ ! -d "$SRC" ]; then
     echo "error: pass a directory of provider JSON documents" >&2
     echo "       Scripts/sync-catalog.sh <path-to-providers-directory>" >&2
-    echo "       (or set MANIFOLD_CATALOG_SRC)" >&2
+    echo "       (or set AIKIT_CATALOG_SRC)" >&2
     exit 1
 fi
 

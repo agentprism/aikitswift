@@ -16,7 +16,7 @@ set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 AI_SDK="${1:-$REPO_ROOT/../vercel-ai}"
-FIXTURES="$REPO_ROOT/Tests/ManifoldTests/Fixtures"
+FIXTURES="$REPO_ROOT/Tests/AIKitTests/Fixtures"
 
 if [ ! -d "$AI_SDK/packages" ]; then
     echo "error: no AI SDK checkout at $AI_SDK" >&2

@@ -1,7 +1,7 @@
 import Foundation
 import Testing
 
-@testable import Manifold
+@testable import AIKit
 
 /// Provider-executed tools — web search, code execution, MCP — report through
 /// blocks the client must never run itself.

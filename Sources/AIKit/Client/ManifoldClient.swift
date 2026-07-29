@@ -5,7 +5,7 @@ import FoundationNetworking
 #endif
 
 /// Something went wrong before the stream produced any content.
-public struct ManifoldError: Error, Sendable, CustomStringConvertible {
+public struct AIClientError: Error, Sendable, CustomStringConvertible {
     public enum Kind: Sendable {
         /// The provider is not in the catalog.
         case unknownProvider(String)
@@ -24,7 +24,7 @@ public struct ManifoldError: Error, Sendable, CustomStringConvertible {
         case .unknownProvider(let id):
             "Unknown provider '\(id)'. Check ProviderCatalog.all for available ids."
         case .unsupportedProtocol(let adapter):
-            "Provider speaks '\(adapter)', which Manifold does not implement yet."
+            "Provider speaks '\(adapter)', which AIKit does not implement yet."
         case .missingBaseURL(let id):
             "Provider '\(id)' has no base URL; supply one in the configuration."
         case .http(let status, let body):
@@ -39,7 +39,7 @@ public struct ManifoldError: Error, Sendable, CustomStringConvertible {
 /// encodes the request, opens the connection, and feeds bytes through the
 /// matching mapper. Everything interesting lives in the wire layer; this is the
 /// plumbing that connects it to a socket.
-public struct ManifoldClient: Sendable {
+public struct AIClient: Sendable {
 
     /// How requests are authenticated.
     public enum Authorization: Sendable {
@@ -96,7 +96,7 @@ public struct ManifoldClient: Sendable {
         session: URLSession = .shared
     ) throws {
         guard let provider = ProviderCatalog.provider(providerId) else {
-            throw ManifoldError(kind: .unknownProvider(providerId))
+            throw AIClientError(kind: .unknownProvider(providerId))
         }
         self.init(provider: provider, configuration: configuration, session: session)
     }
@@ -106,7 +106,7 @@ public struct ManifoldClient: Sendable {
     /// Sends a request and yields normalized events as they arrive.
     public func stream(_ options: CallOptions) throws -> AsyncThrowingStream<StreamPart, any Error> {
         guard let wire = provider.wireProtocol else {
-            throw ManifoldError(kind: .unsupportedProtocol(provider.adapter ?? "none"))
+            throw AIClientError(kind: .unsupportedProtocol(provider.adapter ?? "none"))
         }
 
         let model = provider.model(options.model)
@@ -130,7 +130,7 @@ public struct ManifoldClient: Sendable {
                         // the only useful thing about a failed request.
                         var detail = ""
                         for try await line in bytes.lines { detail += line }
-                        throw ManifoldError(kind: .http(status: http.statusCode, body: detail))
+                        throw AIClientError(kind: .http(status: http.statusCode, body: detail))
                     }
 
                     var mapper = wire.makeMapper()
@@ -205,7 +205,7 @@ public struct ManifoldClient: Sendable {
     private func resolveBaseURL() throws -> URL {
         if let baseURL = configuration.baseURL { return baseURL }
         guard let api = provider.api, let url = URL(string: api) else {
-            throw ManifoldError(kind: .missingBaseURL(provider.id))
+            throw AIClientError(kind: .missingBaseURL(provider.id))
         }
         return url
     }

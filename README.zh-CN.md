@@ -1,16 +1,15 @@
-# Manifold
+# AIKit
 
-多种 LLM wire format 进，一条归一化事件流出。Swift 写的，给 Swift 用。
+Swift 的统一 LLM provider 层。多种 wire format 进，一条归一化事件流出。
 
 [English](README.md)
 
-Manifold 是进气歧管 —— 多个入口汇成一个出口。这个库做的就是这件事：Anthropic 的
-Messages API、OpenAI 的 Completions 和 Responses、Google 的 Generative AI，描述的是同
-一件事，但格式互不兼容。Manifold 把它们映射到同一条事件流上，让应用只写一遍，而不是每
-接一家写一遍。
+Anthropic 的 Messages API、OpenAI 的 Completions 和 Responses、Google 的 Generative
+AI，描述的是同一件事，但格式互不兼容。AIKit 把它们映射到同一条事件流上 —— 事件规范对齐
+Vercel AI SDK —— 让应用只写一遍，而不是每接一家写一遍。
 
 ```swift
-let client = try ManifoldClient(providerId: "deepseek", configuration: .init(apiKey: key))
+let client = try AIClient(providerId: "deepseek", configuration: .init(apiKey: key))
 
 for try await part in try client.stream(CallOptions(model: "deepseek-v4-flash", prompt: [
     .system("回答简洁。"),
@@ -42,10 +41,10 @@ for try await part in try client.stream(CallOptions(model: "deepseek-v4-flash", 
 | OpenAI Codex | 1 |
 | Google Generative AI | 1 |
 
-Manifold 就沿着这条缝切开：
+AIKit 就沿着这条缝切开：
 
 ```
-Sources/Manifold/
+Sources/AIKit/
   Spec/        归一化词汇表 —— 所有 provider 都映射到同一个 enum
   Wire/        每个协议一份实现   （5 个，真正的工作量在这）
   Providers/   catalog            （49 个 JSON 配置，纯数据）
@@ -64,7 +63,7 @@ Swift LLM 客户端把 provider 层塞在一个 6000 行的文件里，支持的
 
 做 provider 集成的人都会遇到同一个问题：调不通的东西没法测，而没人手里有 49 家的 key。
 
-Manifold 绕开了它。测试套件回放 **97 组真实录制的流 + 98 个完整响应体**（从 [AI SDK][aisdk]
+AIKit 绕开了它。测试套件回放 **97 组真实录制的流 + 98 个完整响应体**（从 [AI SDK][aisdk]
 按 MIT 协议 vendored 过来），断言归一化后的输出结构正确。录制的字节进，期望的事件出。
 不联网、无凭证、不需要账号。
 
@@ -138,10 +137,10 @@ usage.calibrated(toTotal: lastResponse.inputTokens.total ?? 0)
 ## 安装
 
 ```swift
-.package(url: "https://github.com/zjywill/manifold.git", branch: "main")
+.package(url: "https://github.com/zjywill/aikitswift.git", branch: "main")
 ```
 
-Swift 6，macOS 14+、iOS 17+。无依赖。
+然后 `import AIKit`。Swift 6，macOS 14+、iOS 17+。无依赖。
 
 ## 现状
 
@@ -219,8 +218,8 @@ catalog 里记录了哪些模型如此，编码器据此丢弃该参数并在 `s
 
 MIT。
 
-`Tests/ManifoldTests/Fixtures/` 下的录制 fixture vendored 自 [vercel/ai][aisdk]，沿用其
-MIT 许可，目录下有 `PROVENANCE.md`。`Sources/Manifold/Catalog/` 下的 provider catalog 是
+`Tests/AIKitTests/Fixtures/` 下的录制 fixture vendored 自 [vercel/ai][aisdk]，沿用其
+MIT 许可，目录下有 `PROVENANCE.md`。`Sources/AIKit/Catalog/` 下的 provider catalog 是
 vendored 数据，用 `Scripts/sync-catalog.sh` 刷新。
 
 [aisdk]: https://github.com/vercel/ai

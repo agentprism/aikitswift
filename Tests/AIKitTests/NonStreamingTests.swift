@@ -1,7 +1,7 @@
 import Foundation
 import Testing
 
-@testable import Manifold
+@testable import AIKit
 
 extension Fixture {
     /// Complete (non-streamed) response bodies recorded alongside the streams.
