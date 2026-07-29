@@ -74,11 +74,17 @@ struct ClientTests {
         #expect(subject.authHeaders(wire: .googleGenerativeAI)["x-goog-api-key"] == "sk-test")
     }
 
-    @Test("no key means no auth headers")
+    @Test("no credential means no credential headers")
     func omitsAuthWithoutKey() throws {
-        // Local runtimes and gateways often need none.
+        // Local runtimes and gateways often need none. The Anthropic version
+        // header is not a credential and is required regardless, so it stays.
         let subject = try ManifoldClient(providerId: "anthropic", configuration: .init())
-        #expect(subject.authHeaders(wire: .anthropicMessages).isEmpty)
+        let headers = subject.authHeaders(wire: .anthropicMessages)
+
+        #expect(headers["x-api-key"] == nil)
+        #expect(headers["authorization"] == nil)
+        #expect(headers["anthropic-version"] == "2023-06-01")
+        #expect(subject.authHeaders(wire: .openAICompletions).isEmpty)
     }
 
     @Test("requests carry a JSON body and streaming headers")

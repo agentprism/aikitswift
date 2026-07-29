@@ -65,13 +65,13 @@ Sources/Manifold/
 
 做 provider 集成的人都会遇到同一个问题：调不通的东西没法测，而没人手里有 49 家的 key。
 
-Manifold 绕开了它。测试套件回放 **97 组真实录制的 provider 响应**（从 [AI SDK][aisdk]
-按 MIT 协议 vendored 过来），断言归一化后的事件流结构正确。录制的字节进，期望的事件出。
+Manifold 绕开了它。测试套件回放 **97 组真实录制的流 + 98 个完整响应体**（从 [AI SDK][aisdk]
+按 MIT 协议 vendored 过来），断言归一化后的输出结构正确。录制的字节进，期望的事件出。
 不联网、无凭证、不需要账号。
 
 ```
 $ swift test
-Test run with 100 tests in 10 suites passed
+Test run with 137 tests in 13 suites passed
 ```
 
 Fixture 按**协议**分组而非按厂商，所以 Chat Completions 这一个 mapper 同时被 7 家厂商的
@@ -158,9 +158,18 @@ Swift 6，macOS 14+、iOS 17+。无依赖。
 | Google Generative AI | ✅ 流式 + 请求 |
 | Provider catalog | ✅ 49 家、413 模型 |
 | 上下文分摊 | ✅ |
-| 非流式响应 | ⬜ |
-| Server tool 结果（代码执行 / MCP / 联网搜索） | ⬜ 目前走 `.raw` |
-| OAuth 流程 | ⬜ |
+| 非流式响应 | ✅ 全协议 |
+| Server tool 结果（代码执行 / MCP / 联网搜索） | ✅ Anthropic —— ⬜ Responses、Gemini |
+| OAuth（PKCE） | ✅ 请求整形 —— ⬜ 浏览器/回环流程 |
+| 各家方言差异 | ⬜ 见下 |
+
+**必须点明的已知缺口：** "38 家说 OpenAI 协议"是个有用的简化，不是事实 —— 它们说的是
+三十八种方言。有的要 `max_completion_tokens`，有的不认 `strict`，有的要求 tool result
+带 `name`；光是 reasoning 一项，各家的请求形状就有[十种变体][pi-compat]。pi-ai 用一个
+compat 开关结构把这些差异编目了，那才是正解，而本库**还没做**。在补上之前，各家差异请
+放进 `providerOptions`。
+
+[pi-compat]: https://github.com/earendil-works/pi/blob/main/packages/ai/src/types.ts
 
 ## 设计取舍
 

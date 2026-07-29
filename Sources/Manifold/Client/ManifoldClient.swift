@@ -41,18 +41,41 @@ public struct ManifoldError: Error, Sendable, CustomStringConvertible {
 /// plumbing that connects it to a socket.
 public struct ManifoldClient: Sendable {
 
+    /// How requests are authenticated.
+    public enum Authorization: Sendable {
+        case none
+        case apiKey(String)
+        /// A subscription or account login rather than a billed API key —
+        /// Claude Pro/Max, OpenAI Codex, OpenRouter. These travel as bearer
+        /// tokens on a different header than an API key, and some providers
+        /// additionally gate them behind an opt-in.
+        case oauth(OAuthCredential)
+    }
+
     public struct Configuration: Sendable {
-        public var apiKey: String?
+        public var authorization: Authorization
         /// Overrides the catalog's base URL. Required for providers that have
         /// none — self-hosted gateways, local runtimes.
         public var baseURL: URL?
         /// Merged into every request, and applied last so they can override.
         public var extraHeaders: [String: String]
 
-        public init(apiKey: String? = nil, baseURL: URL? = nil, extraHeaders: [String: String] = [:]) {
-            self.apiKey = apiKey
+        public init(
+            authorization: Authorization = .none,
+            baseURL: URL? = nil,
+            extraHeaders: [String: String] = [:]
+        ) {
+            self.authorization = authorization
             self.baseURL = baseURL
             self.extraHeaders = extraHeaders
+        }
+
+        public init(apiKey: String?, baseURL: URL? = nil, extraHeaders: [String: String] = [:]) {
+            self.init(
+                authorization: apiKey.map(Authorization.apiKey) ?? .none,
+                baseURL: baseURL,
+                extraHeaders: extraHeaders
+            )
         }
     }
 
@@ -203,19 +226,41 @@ public struct ManifoldClient: Sendable {
     }
 
     func authHeaders(wire: WireProtocol) -> [String: String] {
-        guard let key = configuration.apiKey else { return [:] }
+        switch configuration.authorization {
+        case .none:
+            // Local runtimes and gateways often need none.
+            return wire == .anthropicMessages ? ["anthropic-version": "2023-06-01"] : [:]
 
-        switch wire {
-        case .anthropicMessages:
-            return [
-                "x-api-key": key,
-                // Required on every request; omitting it is a 400.
-                "anthropic-version": "2023-06-01",
-            ]
-        case .openAICompletions, .openAIResponses, .openAICodex:
-            return ["authorization": "Bearer \(key)"]
-        case .googleGenerativeAI:
-            return ["x-goog-api-key": key]
+        case .apiKey(let key):
+            switch wire {
+            case .anthropicMessages:
+                return [
+                    "x-api-key": key,
+                    // Required on every request; omitting it is a 400.
+                    "anthropic-version": "2023-06-01",
+                ]
+            case .openAICompletions, .openAIResponses, .openAICodex:
+                return ["authorization": "Bearer \(key)"]
+            case .googleGenerativeAI:
+                return ["x-goog-api-key": key]
+            }
+
+        case .oauth(let credential):
+            // An OAuth token is a bearer token on `Authorization` — *not* an
+            // API key on `x-api-key`. Converting a working request from a key
+            // to a token is a header change, not a value swap, and sending it
+            // the wrong way fails as an authentication error that looks like a
+            // bad token.
+            var headers = ["authorization": "Bearer \(credential.accessToken)"]
+
+            if wire == .anthropicMessages {
+                headers["anthropic-version"] = "2023-06-01"
+                // Anthropic gates OAuth-authenticated requests behind this
+                // opt-in; without it `/v1/messages` rejects the token.
+                headers["anthropic-beta"] = "oauth-2025-04-20"
+            }
+
+            return headers
         }
     }
 }

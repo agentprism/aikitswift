@@ -63,8 +63,8 @@ total=0
     echo "recording exercises the same OpenAI Completions mapper a Groq recording"
     echo "does."
     echo
-    echo "| Set | Upstream path | Files |"
-    echo "|---|---|---|"
+    echo "| Set | Upstream path | Streams | Response bodies |"
+    echo "|---|---|---|---|"
 } > "$FIXTURES/PROVENANCE.md"
 
 for entry in "${SETS[@]}"; do
@@ -76,7 +76,7 @@ for entry in "${SETS[@]}"; do
 
     dest="$FIXTURES/$name"
     mkdir -p "$dest"
-    rm -f "$dest"/*.chunks.txt
+    rm -f "$dest"/*.chunks.txt "$dest"/*.json
 
     count=0
     while IFS= read -r f; do
@@ -86,13 +86,21 @@ for entry in "${SETS[@]}"; do
         count=$((count + 1))
     done < <(find "$src" -name "*.chunks.txt" 2>/dev/null)
 
+    # Complete (non-streamed) response bodies, recorded alongside the streams.
+    bodies=0
+    while IFS= read -r f; do
+        [ -n "$f" ] || continue
+        cp "$f" "$dest/$(basename "$f")"
+        bodies=$((bodies + 1))
+    done < <(find "$src" -path "*__fixtures__*" -name "*.json" 2>/dev/null)
+
     if [ "$count" -eq 0 ]; then
         rmdir "$dest" 2>/dev/null || true
         continue
     fi
 
-    echo "| \`$name\` | \`$path\` | $count |" >> "$FIXTURES/PROVENANCE.md"
-    echo "  $name: $count"
+    echo "| \`$name\` | \`$path\` | $count | $bodies |" >> "$FIXTURES/PROVENANCE.md"
+    echo "  $name: $count streams, $bodies bodies"
     total=$((total + count))
 done
 

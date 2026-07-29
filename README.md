@@ -69,14 +69,14 @@ fewer formats for it.
 Every provider integration faces the same problem: you cannot test what you cannot
 call, and nobody holds keys for forty-nine vendors.
 
-Manifold sidesteps it. The suite replays **97 recorded provider responses** captured
-from real API calls — vendored from the [AI SDK][aisdk] under MIT — and asserts the
-normalized stream is well-formed. Recorded bytes in, expected events out. No
-network, no credentials, no account.
+Manifold sidesteps it. The suite replays **97 recorded streams and 98 complete
+response bodies** captured from real API calls — vendored from the [AI SDK][aisdk]
+under MIT — and asserts the normalized output is well-formed. Recorded bytes in,
+expected events out. No network, no credentials, no account.
 
 ```
 $ swift test
-Test run with 100 tests in 10 suites passed
+Test run with 137 tests in 13 suites passed
 ```
 
 Fixtures are grouped by **protocol**, not vendor, so the Chat Completions mapper is
@@ -167,9 +167,20 @@ all five protocols; the catalog covers 49 providers.
 | Google Generative AI | ✅ stream + request |
 | Provider catalog | ✅ 49 providers, 413 models |
 | Context attribution | ✅ |
-| Non-streaming responses | ⬜ |
-| Server-tool results (code exec, MCP, web search) | ⬜ surfaced as `.raw` |
-| OAuth flows | ⬜ |
+| Non-streaming responses | ✅ all protocols |
+| Server-tool results (code exec, MCP, web search) | ✅ Anthropic — ⬜ Responses, Gemini |
+| OAuth with PKCE | ✅ request shaping — ⬜ browser/loopback flow |
+| Per-provider dialect quirks | ⬜ see below |
+
+**The known gap worth naming:** "38 providers speak Chat Completions" is a
+useful simplification, not the truth. They speak thirty-eight dialects of it —
+some want `max_completion_tokens`, some reject `strict`, some need a `name` on
+tool results, and reasoning alone has [ten different request shapes][pi-compat]
+across vendors. pi-ai catalogues these as a compat-flags struct, which is the
+right answer and is not implemented here yet. Until it is, per-provider
+divergence belongs in `providerOptions`.
+
+[pi-compat]: https://github.com/earendil-works/pi/blob/main/packages/ai/src/types.ts
 
 ## Design notes
 
