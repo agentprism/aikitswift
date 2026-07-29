@@ -21,8 +21,15 @@ public struct AnthropicMessagesWire: WireMapper {
     private enum Block: Sendable {
         case text
         case reasoning
-        case toolCall(id: String, name: String, input: String)
+        /// `providerExecuted` marks a tool the provider already ran, which the
+        /// client must *not* execute again; `dynamic` marks one defined at
+        /// runtime rather than declared up front, as MCP tools are.
+        case toolCall(id: String, name: String, input: String, providerExecuted: Bool, dynamic: Bool)
     }
+
+    /// Result blocks reference a call by id but do not repeat its name, so the
+    /// name is remembered from the call that opened it.
+    private var serverToolNames: [String: String] = [:]
 
     /// Open content blocks, keyed by the provider's block index.
     private var blocks: [Int: Block] = [:]
@@ -262,14 +269,97 @@ public struct AnthropicMessagesWire: WireMapper {
                 initialInput = (try? JSONValue.object(input).encodedString()) ?? ""
             }
 
-            blocks[index] = .toolCall(id: toolId, name: toolName, input: initialInput)
+            blocks[index] = .toolCall(
+                id: toolId, name: toolName, input: initialInput,
+                providerExecuted: false, dynamic: false
+            )
             return [.toolInputStart(id: toolId, toolName: toolName)]
 
+        case "server_tool_use", "mcp_tool_use":
+            // Structurally identical to `tool_use`, but the provider runs it.
+            // Surfacing it as a normal tool call with `providerExecuted` set
+            // lets a caller render it without risking executing it twice.
+            guard let toolId = block["id"]?.stringValue,
+                  let toolName = block["name"]?.stringValue else {
+                return [.raw(chunk)]
+            }
+
+            let isMCP = blockType == "mcp_tool_use"
+            serverToolNames[toolId] = toolName
+
+            var initialInput = ""
+            if let input = block["input"]?.objectValue, !input.isEmpty {
+                initialInput = (try? JSONValue.object(input).encodedString()) ?? ""
+            }
+
+            blocks[index] = .toolCall(
+                id: toolId, name: toolName, input: initialInput,
+                providerExecuted: true, dynamic: isMCP
+            )
+            return [.toolInputStart(
+                id: toolId,
+                toolName: toolName,
+                providerExecuted: true,
+                dynamic: isMCP
+            )]
+
+        case let type? where type.hasSuffix("_tool_result"):
+            return toolResult(block, type: type, chunk: chunk)
+
         default:
-            // server_tool_use, mcp_tool_use, *_tool_result, and anything the
-            // provider ships next.
             return [.raw(chunk)]
         }
+    }
+
+    /// Normalizes a provider-executed tool result.
+    ///
+    /// Every server tool — web search, web fetch, code execution, MCP, tool
+    /// search, advisor — reports through a block ending in `_tool_result` with
+    /// the same envelope: the id of the call it answers, plus a payload whose
+    /// shape is specific to that tool. The envelope is normalized; the payload
+    /// is passed through intact rather than flattened into a lowest common
+    /// denominator that would lose most of it.
+    private mutating func toolResult(_ block: JSONValue, type: String, chunk: JSONValue) -> [StreamPart] {
+        guard let callId = block["tool_use_id"]?.stringValue else { return [.raw(chunk)] }
+
+        let content = block["content"] ?? .null
+        // The result block does not repeat the tool's name; it was recorded
+        // when the matching call opened. The block type is a usable fallback
+        // when a stream is joined mid-flight.
+        let name = serverToolNames[callId]
+            ?? type.replacingOccurrences(of: "_tool_result", with: "")
+
+        var parts: [StreamPart] = [.toolResult(ToolResult(
+            toolCallId: callId,
+            toolName: name,
+            result: content,
+            isError: block["is_error"]?.boolValue ?? Self.isErrorPayload(content),
+            dynamic: type == "mcp_tool_result",
+            providerMetadata: ["anthropic": ["blockType": .string(type)]]
+        ))]
+
+        // Search results are also citable sources. Emitting them as such means
+        // a caller can render attributions without knowing which provider ran
+        // the search or how it shapes its payload.
+        if type == "web_search_tool_result", let results = content.arrayValue {
+            for (index, result) in results.enumerated() {
+                guard let url = result["url"]?.stringValue else { continue }
+                parts.append(.source(Source(
+                    id: "\(callId)-\(index)",
+                    kind: .url(url),
+                    title: result["title"]?.stringValue
+                )))
+            }
+        }
+
+        return parts
+    }
+
+    /// Server tools report failure inside the payload rather than on the
+    /// envelope, so an error is detected from its shape.
+    private static func isErrorPayload(_ content: JSONValue) -> Bool {
+        content["type"]?.stringValue?.hasSuffix("_tool_result_error") == true
+            || content["error_code"] != nil
     }
 
     private mutating func contentBlockDelta(_ chunk: JSONValue) -> [StreamPart] {
@@ -306,12 +396,15 @@ public struct AnthropicMessagesWire: WireMapper {
         case "input_json_delta":
             guard let fragment = delta["partial_json"]?.stringValue,
                   !fragment.isEmpty,
-                  case .toolCall(let id, let name, let input)? = blocks[index] else {
+                  case .toolCall(let id, let name, let input, let executed, let dynamic)? = blocks[index] else {
                 return []
             }
             // Accumulate so `content_block_stop` can emit the assembled call.
             // Fragments are not individually valid JSON.
-            blocks[index] = .toolCall(id: id, name: name, input: input + fragment)
+            blocks[index] = .toolCall(
+                id: id, name: name, input: input + fragment,
+                providerExecuted: executed, dynamic: dynamic
+            )
             return [.toolInputDelta(id: id, delta: fragment)]
 
         default:
@@ -335,7 +428,7 @@ public struct AnthropicMessagesWire: WireMapper {
         case .reasoning:
             return [.reasoningEnd(id: String(index))]
 
-        case .toolCall(let id, let name, let input):
+        case .toolCall(let id, let name, let input, let executed, let dynamic):
             return [
                 .toolInputEnd(id: id),
                 .toolCall(ToolCall(
@@ -343,7 +436,9 @@ public struct AnthropicMessagesWire: WireMapper {
                     toolName: name,
                     // A tool with no arguments streams no deltas at all; the
                     // assembled input must still be valid JSON.
-                    input: input.isEmpty ? "{}" : input
+                    input: input.isEmpty ? "{}" : input,
+                    providerExecuted: executed,
+                    dynamic: dynamic
                 )),
             ]
         }
