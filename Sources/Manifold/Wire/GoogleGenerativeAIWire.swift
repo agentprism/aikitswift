@@ -23,6 +23,11 @@ public struct GoogleGenerativeAIWire: WireMapper {
     private var finished = false
     /// Makes synthesized tool call ids deterministic.
     private var toolCallCounter = 0
+    /// A `codeExecutionResult` part carries no id, so it is paired with the
+    /// `executableCode` that preceded it.
+    private var lastCodeExecutionId: String?
+    /// Grounding metadata repeats on every chunk; sources are emitted once.
+    private var emittedSources: Set<String> = []
 
     public init() {}
 
@@ -119,6 +124,21 @@ public struct GoogleGenerativeAIWire: WireMapper {
             parts.append(contentsOf: mapPart(part, id: id))
         }
 
+        // Grounding is Gemini's search citation channel. It sits on the
+        // candidate rather than in `parts`, and repeats on every chunk, so
+        // sources are deduplicated by URL.
+        for chunk in candidate["groundingMetadata"]?["groundingChunks"]?.arrayValue ?? [] {
+            guard let web = chunk["web"],
+                  let uri = web["uri"]?.stringValue,
+                  emittedSources.insert(uri).inserted else { continue }
+
+            parts.append(.source(Source(
+                id: "grounding-\(emittedSources.count)",
+                kind: .url(uri),
+                title: web["title"]?.stringValue
+            )))
+        }
+
         if let reason = candidate["finishReason"]?.stringValue {
             finishReason = Self.mapFinishReason(reason)
             parts.append(contentsOf: closeOpenBlocks())
@@ -132,6 +152,43 @@ public struct GoogleGenerativeAIWire: WireMapper {
         // opens and closes in one step.
         if let call = part["functionCall"] {
             return mapFunctionCall(call, signature: part["thoughtSignature"])
+        }
+
+        // Gemini runs code server-side and reports it as two sibling parts:
+        // the source it decided to run, then the outcome. They are normalized
+        // as a provider-executed call and its result so a caller handles them
+        // the same way as any other server tool — and, critically, does not
+        // try to execute the code itself.
+        if let executable = part["executableCode"] {
+            toolCallCounter += 1
+            let callId = "code_execution-\(toolCallCounter)"
+            lastCodeExecutionId = callId
+            let input = (try? executable.encodedString()) ?? "{}"
+
+            return [
+                .toolInputStart(id: callId, toolName: "code_execution", providerExecuted: true),
+                .toolInputDelta(id: callId, delta: input),
+                .toolInputEnd(id: callId),
+                .toolCall(ToolCall(
+                    toolCallId: callId,
+                    toolName: "code_execution",
+                    input: input,
+                    providerExecuted: true
+                )),
+            ]
+        }
+
+        if let result = part["codeExecutionResult"] {
+            // The result arrives as its own part and carries no id, so it is
+            // paired with the most recent execution.
+            guard let callId = lastCodeExecutionId else { return [.raw(part)] }
+            return [.toolResult(ToolResult(
+                toolCallId: callId,
+                toolName: "code_execution",
+                result: result,
+                isError: result["outcome"]?.stringValue.map { $0 != "OUTCOME_OK" } ?? false,
+                providerMetadata: ["google": ["partType": .string("codeExecutionResult")]]
+            ))]
         }
 
         if let inline = part["inlineData"] {

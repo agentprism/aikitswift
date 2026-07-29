@@ -22,6 +22,23 @@ public struct OpenAIResponsesWire: WireMapper {
     /// Function calls keyed by the item id their argument deltas reference.
     private var pendingToolCalls: [String: PendingToolCall] = [:]
     private var toolCallOrder: [String] = []
+    /// Provider-executed items — web search, code interpreter, shell, MCP,
+    /// apply patch — keyed the same way.
+    private var pendingServerTools: [String: PendingToolCall] = [:]
+
+    /// Item types the protocol defines itself, rather than provider-executed
+    /// tool activity.
+    private static let ownItemTypes: Set<String> = [
+        "message", "reasoning", "function_call", "compaction",
+    ]
+
+    /// Delta events that belong to the protocol's own content, not to a
+    /// provider-executed tool.
+    private static let ownDeltaEvents: Set<String> = [
+        "response.output_text.delta",
+        "response.reasoning_summary_text.delta",
+        "response.function_call_arguments.delta",
+    ]
 
     private var textOpen: Set<String> = []
     private var reasoningOpen: Set<String> = []
@@ -144,8 +161,14 @@ public struct OpenAIResponsesWire: WireMapper {
                 raw: chunk
             ))]
 
+        case let type? where type.hasSuffix(".delta") && !Self.ownDeltaEvents.contains(type):
+            // Every provider-executed tool streams its input through an event
+            // of the form `response.<tool>.delta` carrying `item_id` and
+            // `delta`. Matching the shape rather than enumerating tool names
+            // means a tool OpenAI ships next works without a code change.
+            return serverToolDelta(chunk)
+
         default:
-            // Server-side tool activity and anything OpenAI adds next.
             return [.raw(chunk)]
         }
     }
@@ -177,18 +200,124 @@ public struct OpenAIResponsesWire: WireMapper {
         case "message":
             return []
 
+        case let type? where !Self.ownItemTypes.contains(type):
+            // Provider-executed tool activity: web search, code interpreter,
+            // shell, MCP, apply patch, image generation. The item type is the
+            // tool name — there is no separate name field.
+            //
+            // Surfacing these as tool calls with `providerExecuted` set is not
+            // cosmetic: a shell or apply-patch call mistaken for a client one
+            // would be executed a second time, with real side effects.
+            let callId = item["call_id"]?.stringValue ?? itemId
+            pendingServerTools[itemId] = PendingToolCall(callId: callId, name: type, arguments: "")
+            return [.toolInputStart(
+                id: callId,
+                toolName: type,
+                providerExecuted: true,
+                dynamic: type.hasPrefix("mcp_")
+            )]
+
         default:
             return [.raw(chunk)]
         }
     }
 
+    /// Routes a `response.<tool>.delta` event to the item it belongs to.
+    private mutating func serverToolDelta(_ chunk: JSONValue) -> [StreamPart] {
+        guard let itemId = chunk["item_id"]?.stringValue,
+              let delta = chunk["delta"]?.stringValue, !delta.isEmpty,
+              let pending = pendingServerTools[itemId] else {
+            return [.raw(chunk)]
+        }
+
+        pendingServerTools[itemId]?.arguments = pending.arguments + delta
+        return [.toolInputDelta(id: pending.callId, delta: delta)]
+    }
+
+    /// Closes a provider-executed item, emitting both the call and its result.
+    ///
+    /// Unlike a client tool — where the call is all the provider sends and the
+    /// result comes back from the caller — a server tool reports both halves,
+    /// so both are emitted here.
+    private mutating func finishServerTool(
+        _ item: JSONValue,
+        itemId: String,
+        pending: PendingToolCall
+    ) -> [StreamPart] {
+        // Input may have streamed as deltas or arrived whole on the item.
+        // Whichever it is, the assembled value must be valid JSON.
+        var input = pending.arguments
+        if input.isEmpty {
+            input = Self.inputPayload(of: item).flatMap { try? $0.encodedString() } ?? "{}"
+        } else if (try? JSONValue.decode(from: input)) == nil {
+            // Several tools stream a bare fragment — a shell command, a patch
+            // diff, a block of code — rather than JSON. Wrapping keeps the
+            // contract that assembled input parses.
+            input = (try? JSONValue.object(["input": .string(input)]).encodedString()) ?? "{}"
+        }
+
+        var parts: [StreamPart] = [
+            .toolInputEnd(id: pending.callId),
+            .toolCall(ToolCall(
+                toolCallId: pending.callId,
+                toolName: pending.name,
+                input: input,
+                providerExecuted: true,
+                dynamic: pending.name.hasPrefix("mcp_")
+            )),
+        ]
+
+        parts.append(.toolResult(ToolResult(
+            toolCallId: pending.callId,
+            toolName: pending.name,
+            // The whole item is the result: its payload shape is specific to
+            // the tool, and flattening sixteen unrelated tools into a common
+            // shape would discard most of what each reports.
+            result: item,
+            isError: item["status"]?.stringValue == "failed" || item["error"] != nil,
+            dynamic: pending.name.hasPrefix("mcp_"),
+            providerMetadata: ["openai": ["itemType": .string(pending.name)]]
+        )))
+
+        // Search results double as citable sources.
+        parts.append(contentsOf: Self.sources(of: item, callId: pending.callId))
+
+        return parts
+    }
+
+    /// The field carrying a server tool's input, which each tool names
+    /// differently.
+    private static func inputPayload(of item: JSONValue) -> JSONValue? {
+        for key in ["arguments", "action", "operation", "code", "query"] {
+            if let value = item[key], !value.isNull { return value }
+        }
+        return nil
+    }
+
+    private static func sources(of item: JSONValue, callId: String) -> [StreamPart] {
+        var parts: [StreamPart] = []
+        for (index, result) in (item["results"]?.arrayValue ?? []).enumerated() {
+            guard let url = result["url"]?.stringValue else { continue }
+            parts.append(.source(Source(
+                id: "\(callId)-\(index)",
+                kind: .url(url),
+                title: result["title"]?.stringValue
+            )))
+        }
+        return parts
+    }
+
     private mutating func outputItemDone(_ chunk: JSONValue) -> [StreamPart] {
-        guard let itemId = chunk["item"]?["id"]?.stringValue else { return [] }
+        guard let item = chunk["item"], let itemId = item["id"]?.stringValue else { return [] }
 
         var parts: [StreamPart] = []
 
         if reasoningOpen.remove(itemId) != nil {
             parts.append(.reasoningEnd(id: itemId))
+        }
+
+        if let pending = pendingServerTools.removeValue(forKey: itemId) {
+            parts.append(contentsOf: finishServerTool(item, itemId: itemId, pending: pending))
         }
 
         if let pending = pendingToolCalls.removeValue(forKey: itemId) {

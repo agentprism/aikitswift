@@ -34,6 +34,15 @@ public struct CallOptions: Sendable {
     /// A JSON Schema the response must conform to, where supported.
     public var responseFormat: JSONValue?
 
+    /// How hard the model should think — `low`, `medium`, `high`, and on some
+    /// models `xhigh` or `max`.
+    ///
+    /// Normalized because the request shape for this differs more across
+    /// providers than any other single setting. Each dialect renders it into
+    /// whatever that vendor expects; setting it is `nil` leaves reasoning at
+    /// the model's default.
+    public var reasoningEffort: String?
+
     /// Escape hatch for anything vendor-specific, namespaced by provider id.
     ///
     /// Merged into the request body by that provider's encoder and ignored by
@@ -52,6 +61,7 @@ public struct CallOptions: Sendable {
         topP: Double? = nil,
         topK: Int? = nil,
         responseFormat: JSONValue? = nil,
+        reasoningEffort: String? = nil,
         providerOptions: ProviderMetadata = [:]
     ) {
         self.model = model
@@ -64,6 +74,7 @@ public struct CallOptions: Sendable {
         self.topP = topP
         self.topK = topK
         self.responseFormat = responseFormat
+        self.reasoningEffort = reasoningEffort
         self.providerOptions = providerOptions
     }
 

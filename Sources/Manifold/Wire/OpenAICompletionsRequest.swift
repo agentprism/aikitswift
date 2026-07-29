@@ -7,28 +7,54 @@ import Foundation
 /// beyond the common core belongs in `providerOptions` rather than here.
 public enum OpenAICompletionsRequest {
 
-    public static func encode(_ options: CallOptions, model: ModelInfo? = nil) -> EncodedRequest {
+    /// - Parameter dialect: how this provider deviates from the reference
+    ///   API. Defaults to the conservative baseline; pass
+    ///   ``CompletionsDialect/forProvider(_:)`` for a catalog provider.
+    public static func encode(
+        _ options: CallOptions,
+        model: ModelInfo? = nil,
+        dialect: CompletionsDialect = .default
+    ) -> EncodedRequest {
         var body: [String: JSONValue] = [
             "model": .string(options.model),
             "stream": .bool(true),
-            // Without this, the API returns **no usage at all** on a streamed
-            // response. Costs nothing, and omitting it means silently losing
-            // every token count.
-            "stream_options": .object(["include_usage": .bool(true)]),
         ]
         var warnings: [Warning] = []
 
-        body["messages"] = .array(encodeMessages(options.prompt))
+        // Without this, a provider that supports it returns **no usage at all**
+        // on a streamed response — while a provider that does not support it
+        // rejects the request outright. The only flag that is dangerous in both
+        // directions, which is why it is dialect-driven rather than assumed.
+        if dialect.supportsUsageInStreaming {
+            body["stream_options"] = .object(["include_usage": .bool(true)])
+        }
+
+        body["messages"] = .array(encodeMessages(options.prompt, dialect: dialect))
 
         if let maxTokens = options.maxOutputTokens {
             // Reasoning models rejected the older `max_tokens` in favour of
             // `max_completion_tokens`, and the budget covers reasoning too.
-            let field = (model?.supportsReasoning ?? false) ? "max_completion_tokens" : "max_tokens"
-            body[field] = .number(Double(maxTokens))
+            let field = (model?.supportsReasoning ?? false)
+                ? CompletionsDialect.MaxTokensField.maxCompletionTokens
+                : dialect.maxTokensField
+            body[field.rawValue] = .number(Double(maxTokens))
+        }
+
+        // Rendered into whichever shape this vendor expects — there are at
+        // least seven incompatible ones in the catalog.
+        if options.reasoningEffort != nil || (model?.reasoning?.default ?? false) {
+            if dialect.thinkingFormat == .unsupported {
+                warnings.append(Warning(
+                    message: "\(options.model) has no reasoning-control parameter; dropped.",
+                    setting: "reasoningEffort"
+                ))
+            } else {
+                dialect.applyThinking(effort: options.reasoningEffort, enabled: true, to: &body)
+            }
         }
 
         if !options.tools.isEmpty {
-            body["tools"] = .array(options.tools.map(encodeTool))
+            body["tools"] = .array(options.tools.map { encodeTool($0, dialect: dialect) })
         }
         if let choice = options.toolChoice {
             body["tool_choice"] = encodeToolChoice(choice)
@@ -70,7 +96,7 @@ public enum OpenAICompletionsRequest {
 
     // MARK: - Messages
 
-    private static func encodeMessages(_ prompt: Prompt) -> [JSONValue] {
+    private static func encodeMessages(_ prompt: Prompt, dialect: CompletionsDialect) -> [JSONValue] {
         var messages: [JSONValue] = []
 
         for message in prompt {
@@ -80,11 +106,17 @@ public enum OpenAICompletionsRequest {
                 // unlike Anthropic, which batches them into one user turn.
                 for part in message.content {
                     guard case .toolResult(let result) = part else { continue }
-                    messages.append(.object([
+                    var encoded: [String: JSONValue] = [
                         "role": "tool",
                         "tool_call_id": .string(result.toolCallId),
                         "content": .string(AnthropicMessagesRequest.stringify(result.result)),
-                    ]))
+                    ]
+                    // A few providers reject a tool result that omits the name,
+                    // even though the reference API ignores it.
+                    if dialect.requiresToolResultName {
+                        encoded["name"] = .string(result.toolName)
+                    }
+                    messages.append(.object(encoded))
                 }
 
             case .assistant:
@@ -165,7 +197,7 @@ public enum OpenAICompletionsRequest {
         return .object(["type": "image_url", "image_url": .object(["url": .string(url)])])
     }
 
-    private static func encodeTool(_ tool: ToolDefinition) -> JSONValue {
+    private static func encodeTool(_ tool: ToolDefinition, dialect: CompletionsDialect) -> JSONValue {
         var function: [String: JSONValue] = [
             "name": .string(tool.name),
             "parameters": tool.inputSchema,
@@ -173,7 +205,9 @@ public enum OpenAICompletionsRequest {
         if let description = tool.description {
             function["description"] = .string(description)
         }
-        if tool.strict {
+        // Sending `strict` to a provider that does not implement it is a 400,
+        // so it is dropped rather than risking the whole request.
+        if tool.strict && dialect.supportsStrict {
             function["strict"] = .bool(true)
         }
         return .object(["type": "function", "function": .object(function)])

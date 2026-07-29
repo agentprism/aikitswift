@@ -165,7 +165,14 @@ public struct ManifoldClient: Sendable {
         case .anthropicMessages:
             AnthropicMessagesRequest.encode(options, model: model)
         case .openAICompletions:
-            OpenAICompletionsRequest.encode(options, model: model)
+            // The dialect is selected from the provider, not the protocol:
+            // thirty-eight providers share this encoder and disagree about the
+            // details.
+            OpenAICompletionsRequest.encode(
+                options,
+                model: model,
+                dialect: .forProvider(provider.id)
+            )
         case .openAIResponses, .openAICodex:
             OpenAIResponsesRequest.encode(options, model: model)
         case .googleGenerativeAI:

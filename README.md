@@ -76,7 +76,7 @@ expected events out. No network, no credentials, no account.
 
 ```
 $ swift test
-Test run with 137 tests in 13 suites passed
+Test run with 164 tests in 16 suites passed
 ```
 
 Fixtures are grouped by **protocol**, not vendor, so the Chat Completions mapper is
@@ -168,19 +168,27 @@ all five protocols; the catalog covers 49 providers.
 | Provider catalog | ✅ 49 providers, 413 models |
 | Context attribution | ✅ |
 | Non-streaming responses | ✅ all protocols |
-| Server-tool results (code exec, MCP, web search) | ✅ Anthropic — ⬜ Responses, Gemini |
-| OAuth with PKCE | ✅ request shaping — ⬜ browser/loopback flow |
-| Per-provider dialect quirks | ⬜ see below |
+| Server-tool results (code exec, MCP, web search) | ✅ all protocols |
+| OAuth with PKCE + loopback | ✅ |
+| Per-provider dialect quirks | ✅ see below |
 
-**The known gap worth naming:** "38 providers speak Chat Completions" is a
-useful simplification, not the truth. They speak thirty-eight dialects of it —
-some want `max_completion_tokens`, some reject `strict`, some need a `name` on
-tool results, and reasoning alone has [ten different request shapes][pi-compat]
-across vendors. pi-ai catalogues these as a compat-flags struct, which is the
-right answer and is not implemented here yet. Until it is, per-provider
-divergence belongs in `providerOptions`.
+**Dialects.** "38 providers speak Chat Completions" is a useful simplification,
+not the truth. They speak thirty-eight dialects: some want
+`max_completion_tokens`, some reject `strict`, some need a `name` on tool
+results, and reasoning alone has seven incompatible request shapes across the
+catalog. `CompletionsDialect` encodes those as data rather than branches, so one
+encoder still serves all of them — the approach [pi-ai][pi] arrived at, and the
+reason the JavaScript SDKs need a package per provider instead.
 
-[pi-compat]: https://github.com/earendil-works/pi/blob/main/packages/ai/src/types.ts
+`supportsUsageInStreaming` is the flag worth knowing about: send
+`stream_options.include_usage` to a provider that rejects it and the request
+400s; omit it where it is supported and every token count silently vanishes.
+
+**Honest caveat on coverage.** The Anthropic and OpenAI Responses server-tool
+paths are tested against recorded traffic. The Gemini equivalents — code
+execution, grounding — are not: no recording in the corpus exercises them, so
+those tests encode the documented shapes instead. That is a weaker guarantee and
+is flagged in the suite rather than papered over.
 
 ## Design notes
 

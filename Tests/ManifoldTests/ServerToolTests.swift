@@ -169,3 +169,173 @@ extension Fixture {
         }
     }
 }
+
+/// Provider-executed tools on the other two protocols.
+///
+/// The Gemini cases are synthetic: the vendored fixture corpus contains no
+/// recording that exercises code execution or grounding, so these encode the
+/// documented shapes rather than captured traffic. That is a weaker guarantee
+/// than the Anthropic and Responses suites, and is called out rather than
+/// papered over.
+@Suite("Server tools — other protocols")
+struct OtherProtocolServerToolTests {
+
+    @Test("Responses server tools are provider-executed", arguments: [
+        "openai-web-search-tool.1",
+        "openai-code-interpreter-tool.1",
+        "openai-apply-patch-tool.1",
+    ])
+    func responsesFlagsProviderExecuted(name: String) throws {
+        let parts = try Fixture.replay(OpenAIResponsesWire.self, "openai-responses", name)
+            .flatMap { $0 }
+
+        let calls = parts.compactMap {
+            if case .toolCall(let call) = $0 { return call } else { return nil }
+        }
+        let serverCalls = calls.filter(\.providerExecuted)
+
+        #expect(!serverCalls.isEmpty, "\(name): no provider-executed call")
+        // A shell or apply-patch call mistaken for a client one would run
+        // twice, with real side effects.
+        #expect(parts.contains { if case .toolResult = $0 { return true } else { return false } })
+    }
+
+    @Test("Responses server tool input parses even when it streams bare text")
+    func responsesWrapsNonJSONInput() throws {
+        // Several tools stream a shell command, a patch diff or a block of
+        // code rather than JSON. The contract that assembled input parses has
+        // to hold anyway.
+        var wire = OpenAIResponsesWire()
+        _ = wire.map(chunk: [
+            "type": "response.output_item.added",
+            "item": ["type": "shell_call", "id": "sh_1", "call_id": "call_sh"],
+        ])
+        _ = wire.map(chunk: [
+            "type": "response.shell_call_command.delta",
+            "item_id": "sh_1",
+            "delta": "ls -la /tmp",
+        ])
+        let parts = wire.map(chunk: [
+            "type": "response.output_item.done",
+            "item": ["type": "shell_call", "id": "sh_1", "call_id": "call_sh", "status": "completed"],
+        ])
+
+        let call = parts.compactMap { if case .toolCall(let c) = $0 { return c } else { return nil } }.first
+        #expect(call?.providerExecuted == true)
+        #expect((try? JSONValue.decode(from: call?.input ?? "")) != nil)
+    }
+
+    @Test("an unknown Responses tool still normalizes")
+    func responsesHandlesUnknownTool() {
+        // Matching the event shape rather than a list of tool names means a
+        // tool OpenAI ships next works without a code change.
+        var wire = OpenAIResponsesWire()
+        _ = wire.map(chunk: [
+            "type": "response.output_item.added",
+            "item": ["type": "future_tool_call", "id": "ft_1"],
+        ])
+        _ = wire.map(chunk: [
+            "type": "response.future_tool_call_thing.delta",
+            "item_id": "ft_1",
+            "delta": "{\"a\":1}",
+        ])
+        let parts = wire.map(chunk: [
+            "type": "response.output_item.done",
+            "item": ["type": "future_tool_call", "id": "ft_1"],
+        ])
+
+        let call = parts.compactMap { if case .toolCall(let c) = $0 { return c } else { return nil } }.first
+        #expect(call?.toolName == "future_tool_call")
+        #expect(call?.providerExecuted == true)
+    }
+
+    @Test("MCP calls are marked dynamic on Responses")
+    func responsesMarksMCPDynamic() {
+        var wire = OpenAIResponsesWire()
+        _ = wire.map(chunk: [
+            "type": "response.output_item.added",
+            "item": ["type": "mcp_call", "id": "mcp_1", "call_id": "call_mcp"],
+        ])
+        let parts = wire.map(chunk: [
+            "type": "response.output_item.done",
+            "item": ["type": "mcp_call", "id": "mcp_1", "call_id": "call_mcp"],
+        ])
+
+        let call = parts.compactMap { if case .toolCall(let c) = $0 { return c } else { return nil } }.first
+        #expect(call?.dynamic == true)
+        #expect(call?.providerExecuted == true)
+    }
+
+    @Test("Gemini code execution becomes a call and a result")
+    func geminiNormalizesCodeExecution() {
+        var wire = GoogleGenerativeAIWire()
+        let parts = wire.map(chunk: [
+            "candidates": [[
+                "index": 0,
+                "content": ["parts": [
+                    ["executableCode": ["language": "PYTHON", "code": "print(1)"]],
+                    ["codeExecutionResult": ["outcome": "OUTCOME_OK", "output": "1\n"]],
+                ]],
+            ]],
+        ])
+
+        let call = parts.compactMap { if case .toolCall(let c) = $0 { return c } else { return nil } }.first
+        #expect(call?.toolName == "code_execution")
+        // The caller must not run this code itself.
+        #expect(call?.providerExecuted == true)
+
+        let result = parts.compactMap {
+            if case .toolResult(let r) = $0 { return r } else { return nil }
+        }.first
+        // The result carries no id of its own and is paired with the execution
+        // that preceded it.
+        #expect(result?.toolCallId == call?.toolCallId)
+        #expect(result?.isError == false)
+    }
+
+    @Test("a failed Gemini execution is flagged as an error")
+    func geminiFlagsFailedExecution() {
+        var wire = GoogleGenerativeAIWire()
+        let parts = wire.map(chunk: [
+            "candidates": [[
+                "index": 0,
+                "content": ["parts": [
+                    ["executableCode": ["language": "PYTHON", "code": "1/0"]],
+                    ["codeExecutionResult": ["outcome": "OUTCOME_FAILED", "output": "ZeroDivisionError"]],
+                ]],
+            ]],
+        ])
+
+        let result = parts.compactMap {
+            if case .toolResult(let r) = $0 { return r } else { return nil }
+        }.first
+        #expect(result?.isError == true)
+    }
+
+    @Test("Gemini grounding becomes sources, deduplicated")
+    func geminiNormalizesGrounding() {
+        // Grounding metadata repeats on every chunk, so emitting it verbatim
+        // would produce one duplicate citation per chunk.
+        var wire = GoogleGenerativeAIWire()
+        let chunk: JSONValue = [
+            "candidates": [[
+                "index": 0,
+                "content": ["parts": [["text": "hi"]]],
+                "groundingMetadata": ["groundingChunks": [
+                    ["web": ["uri": "https://swift.org", "title": "Swift"]],
+                    ["web": ["uri": "https://apple.com", "title": "Apple"]],
+                ]],
+            ]],
+        ]
+
+        let first = wire.map(chunk: chunk)
+        let second = wire.map(chunk: chunk)
+
+        func sources(_ parts: [StreamPart]) -> [Source] {
+            parts.compactMap { if case .source(let s) = $0 { return s } else { return nil } }
+        }
+
+        #expect(sources(first).count == 2)
+        #expect(sources(second).isEmpty, "grounding was re-emitted on a repeat chunk")
+    }
+}

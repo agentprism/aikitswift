@@ -71,7 +71,7 @@ Manifold 绕开了它。测试套件回放 **97 组真实录制的流 + 98 个�
 
 ```
 $ swift test
-Test run with 137 tests in 13 suites passed
+Test run with 164 tests in 16 suites passed
 ```
 
 Fixture 按**协议**分组而非按厂商，所以 Chat Completions 这一个 mapper 同时被 7 家厂商的
@@ -159,17 +159,24 @@ Swift 6，macOS 14+、iOS 17+。无依赖。
 | Provider catalog | ✅ 49 家、413 模型 |
 | 上下文分摊 | ✅ |
 | 非流式响应 | ✅ 全协议 |
-| Server tool 结果（代码执行 / MCP / 联网搜索） | ✅ Anthropic —— ⬜ Responses、Gemini |
-| OAuth（PKCE） | ✅ 请求整形 —— ⬜ 浏览器/回环流程 |
-| 各家方言差异 | ⬜ 见下 |
+| Server tool 结果（代码执行 / MCP / 联网搜索） | ✅ 全协议 |
+| OAuth（PKCE + 回环监听） | ✅ |
+| 各家方言差异 | ✅ 见下 |
 
-**必须点明的已知缺口：** "38 家说 OpenAI 协议"是个有用的简化，不是事实 —— 它们说的是
-三十八种方言。有的要 `max_completion_tokens`，有的不认 `strict`，有的要求 tool result
-带 `name`；光是 reasoning 一项，各家的请求形状就有[十种变体][pi-compat]。pi-ai 用一个
-compat 开关结构把这些差异编目了，那才是正解，而本库**还没做**。在补上之前，各家差异请
-放进 `providerOptions`。
+**方言。** "38 家说 OpenAI 协议"是个有用的简化，不是事实 —— 它们说的是三十八种方言。
+有的要 `max_completion_tokens`，有的不认 `strict`，有的要求 tool result 带 `name`；
+光是 reasoning 一项，catalog 里就有七种互不兼容的请求形状。`CompletionsDialect` 把这些
+差异编码成**数据而非分支**，所以一个编码器仍然服务所有人 —— 这是 [pi-ai][pi] 的做法，
+也是 JS 生态不得不每家发一个包的原因。
 
-[pi-compat]: https://github.com/earendil-works/pi/blob/main/packages/ai/src/types.ts
+其中 `supportsUsageInStreaming` 最值得注意：向不支持的 provider 发
+`stream_options.include_usage` 会 400；向支持的 provider 漏发，则所有 token 计数**静默
+消失**。两个方向都会出事。
+
+**关于覆盖度的诚实说明。** Anthropic 和 OpenAI Responses 的 server tool 路径是拿真实录
+制的流量测的。Gemini 那部分（代码执行、grounding）不是 —— 语料里没有任何一条录制触及它
+们，所以那几个测试编码的是文档形状而非捕获流量。这是更弱的保证，我在测试套件里标注了，
+没有蒙混过去。
 
 ## 设计取舍
 
