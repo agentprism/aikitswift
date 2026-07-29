@@ -59,10 +59,9 @@ A provider is data: a base URL, an auth method, a model list, and the `adapter`
 naming the protocol it speaks. Adding one is a config file, not an implementation —
 and it needs no new wire tests, because the protocol it points at is already covered.
 
-That factoring is borrowed from [pi-ai][pi] and the [dim-agent][dim] catalog, which
-arrived at it independently. The counter-example is worth naming too: a well-known
-Swift LLM client keeps its provider layer in a single 6,000-line file, and supports
-fewer formats for it.
+That factoring is borrowed from [pi-ai][pi], which arrived at it independently. The
+counter-example is worth naming too: a well-known Swift LLM client keeps its
+provider layer in a single 6,000-line file, and supports fewer formats for it.
 
 ## Testing without API keys
 
@@ -234,20 +233,17 @@ the kind of thing that costs money quietly rather than failing loudly.
   library is tested against. MIT.
 - **[pi-ai][pi]** — the protocol/provider split, and a reminder of how much of a
   provider layer is configuration rather than code.
-- **[dim-agent][dim]** — the provider catalog, including the Chinese providers the
-  Western SDKs omit.
 - **[Osaurus][osaurus]** — Swift-native, and a usable local test target.
 
 ## License
 
 MIT.
 
-Vendored data keeps its upstream license: recorded fixtures under
-`Tests/ManifoldTests/Fixtures/` come from [vercel/ai][aisdk] (MIT), and the provider
-catalog under `Sources/Manifold/Catalog/` from [dim-agent][dim]. See the
-`PROVENANCE.md` in each directory.
+Recorded fixtures under `Tests/ManifoldTests/Fixtures/` are vendored from
+[vercel/ai][aisdk] and keep its MIT license — see the `PROVENANCE.md` there. The
+provider catalog under `Sources/Manifold/Catalog/` is vendored data refreshed by
+`Scripts/sync-catalog.sh`.
 
 [aisdk]: https://github.com/vercel/ai
 [pi]: https://github.com/earendil-works/pi
-[dim]: https://github.com/ThinkInAIXYZ
 [osaurus]: https://github.com/osaurus-ai/osaurus

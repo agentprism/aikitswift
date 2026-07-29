@@ -57,9 +57,8 @@ Sources/Manifold/
 字段。加一家是写配置，不是写实现 —— 而且**不需要新的 wire 测试**，因为它指向的协议早就
 被覆盖了。
 
-这个切法借鉴自 [pi-ai][pi] 和 [dim-agent][dim] 的 catalog，两者是各自独立得出同一结论
-的。反面教材也值得一提：某个知名的 Swift LLM 客户端把 provider 层塞在一个 6000 行的文件
-里，支持的格式反而更少。
+这个切法借鉴自 [pi-ai][pi]，是各自独立得出的同一结论。反面教材也值得一提：某个知名的
+Swift LLM 客户端把 provider 层塞在一个 6000 行的文件里，支持的格式反而更少。
 
 ## 没有 API key 也能测
 
@@ -214,18 +213,16 @@ catalog 里记录了哪些模型如此，编码器据此丢弃该参数并在 `s
 - **[vercel/ai][aisdk]** —— 归一化事件规范，以及本库据以测试的 fixture 语料。MIT。
 - **[pi-ai][pi]** —— 协议/provider 的二分法，以及"provider 层里有多大比例其实是配置而非
   代码"这个提醒。
-- **[dim-agent][dim]** —— provider catalog，包含西方 SDK 普遍缺失的国内厂商。
 - **[Osaurus][osaurus]** —— 原生 Swift，也是个好用的本地被测端。
 
 ## 许可
 
 MIT。
 
-Vendored 进来的数据沿用其上游许可：`Tests/ManifoldTests/Fixtures/` 下的录制 fixture 来自
-[vercel/ai][aisdk]（MIT），`Sources/Manifold/Catalog/` 下的 provider catalog 来自
-[dim-agent][dim]。各目录下有对应的 `PROVENANCE.md`。
+`Tests/ManifoldTests/Fixtures/` 下的录制 fixture vendored 自 [vercel/ai][aisdk]，沿用其
+MIT 许可，目录下有 `PROVENANCE.md`。`Sources/Manifold/Catalog/` 下的 provider catalog 是
+vendored 数据，用 `Scripts/sync-catalog.sh` 刷新。
 
 [aisdk]: https://github.com/vercel/ai
 [pi]: https://github.com/earendil-works/pi
-[dim]: https://github.com/ThinkInAIXYZ
 [osaurus]: https://github.com/osaurus-ai/osaurus

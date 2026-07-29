@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Syncs the provider catalog from a dim-agent checkout.
+# Syncs the provider catalog from an upstream checkout.
 #
 # The catalog is data, not code: each provider is a small JSON document naming
 # its base URL, its models, and — crucially — the `adapter` that identifies
@@ -12,17 +12,21 @@
 # accepted) tracks upstream instead of rotting here.
 #
 # Usage:
-#   Scripts/sync-catalog.sh [path-to-dim-agent-checkout]
+#   Scripts/sync-catalog.sh <path-to-providers-directory>
+#
+# The source is a directory of per-provider JSON documents. Set
+# MANIFOLD_CATALOG_SRC to avoid passing it every time.
 
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-DIM_AGENT="${1:-$REPO_ROOT/../dim-agent}"
-SRC="$DIM_AGENT/packages/agent/src/provider/catalog/providers"
+SRC="${1:-${MANIFOLD_CATALOG_SRC:-}}"
 DEST="$REPO_ROOT/Sources/Manifold/Catalog/providers"
 
-if [ ! -d "$SRC" ]; then
-    echo "error: no provider catalog at $SRC" >&2
+if [ -z "$SRC" ] || [ ! -d "$SRC" ]; then
+    echo "error: pass a directory of provider JSON documents" >&2
+    echo "       Scripts/sync-catalog.sh <path-to-providers-directory>" >&2
+    echo "       (or set MANIFOLD_CATALOG_SRC)" >&2
     exit 1
 fi
 
@@ -36,7 +40,7 @@ for f in "$SRC"/*.json; do
     count=$((count + 1))
 done
 
-UPSTREAM_SHA="$(git -C "$DIM_AGENT" rev-parse --short HEAD 2>/dev/null || echo unknown)"
+UPSTREAM_SHA="$(git -C "$SRC" rev-parse --short HEAD 2>/dev/null || echo unknown)"
 
 python3 - "$DEST" "$UPSTREAM_SHA" "$count" <<'PY'
 import json, glob, os, sys, collections
