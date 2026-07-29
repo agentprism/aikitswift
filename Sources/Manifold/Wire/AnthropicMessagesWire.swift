@@ -15,7 +15,7 @@ import Foundation
 /// - Note: Chunk types with no normalized equivalent yet (server tool use,
 ///   MCP, code execution results, citations) are surfaced as ``StreamPart/raw(_:)``
 ///   rather than dropped, so no data is lost while coverage grows.
-public struct AnthropicMessagesWire: Sendable {
+public struct AnthropicMessagesWire: WireMapper {
 
     /// What an open content block is accumulating.
     private enum Block: Sendable {
@@ -39,6 +39,7 @@ public struct AnthropicMessagesWire: Sendable {
     private var stopSequence: JSONValue?
     private var stopDetails: JSONValue?
     private var emittedStreamStart = false
+    private var emittedFinish = false
 
     public init() {}
 
@@ -165,7 +166,20 @@ public struct AnthropicMessagesWire: Sendable {
         return []
     }
 
+    /// Closes the stream if the provider never sent `message_stop`.
+    ///
+    /// Anthropic emits the terminal `finish` from `message_stop`, so this is
+    /// normally a no-op — but a dropped connection would otherwise lose the
+    /// final usage entirely.
+    public mutating func finish() -> [StreamPart] {
+        guard !emittedFinish else { return [] }
+        return messageStop()
+    }
+
     private mutating func messageStop() -> [StreamPart] {
+        guard !emittedFinish else { return [] }
+        emittedFinish = true
+
         var metadata: [String: JSONValue] = ["usage": .object(usage)]
         if let stopSequence, !stopSequence.isNull {
             metadata["stopSequence"] = stopSequence
