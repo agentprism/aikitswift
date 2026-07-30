@@ -8,15 +8,20 @@ public enum AnthropicMessagesRequest {
     ///     drop settings the model rejects rather than letting the request fail.
     ///   - reasoningToggle: a provider-level override for how thinking is
     ///     switched on and off — resellers of this protocol rename the values.
+    ///   - streaming: whether the response should stream. `false` produces the
+    ///     body for a complete-response request.
     public static func encode(
         _ options: CallOptions,
         model: ModelInfo? = nil,
-        reasoningToggle: ProviderInfo.ReasoningToggle? = nil
+        reasoningToggle: ProviderInfo.ReasoningToggle? = nil,
+        streaming: Bool = true
     ) -> EncodedRequest {
         var body: [String: JSONValue] = [
-            "model": .string(options.model),
-            "stream": .bool(true),
+            "model": .string(options.model)
         ]
+        if streaming {
+            body["stream"] = .bool(true)
+        }
         var warnings: [Warning] = []
 
         // `max_tokens` is required by this API, unlike the others. The fallback

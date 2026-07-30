@@ -7,11 +7,19 @@ import Foundation
 /// that same list rather than fields on a message.
 public enum OpenAIResponsesRequest {
 
-    public static func encode(_ options: CallOptions, model: ModelInfo? = nil) -> EncodedRequest {
+    /// - Parameter streaming: whether the response should stream. `false`
+    ///   produces the body for a complete-response request.
+    public static func encode(
+        _ options: CallOptions,
+        model: ModelInfo? = nil,
+        streaming: Bool = true
+    ) -> EncodedRequest {
         var body: [String: JSONValue] = [
-            "model": .string(options.model),
-            "stream": .bool(true),
+            "model": .string(options.model)
         ]
+        if streaming {
+            body["stream"] = .bool(true)
+        }
         var warnings: [Warning] = []
 
         // System instructions are a top-level string, not an input item.

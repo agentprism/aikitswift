@@ -33,6 +33,12 @@ public struct AIClientError: Error, Sendable, CustomStringConvertible {
     }
 }
 
+// Without this, `error.localizedDescription` — the accessor every app reaches
+// for first — shows Foundation's generic text instead of the message above.
+extension AIClientError: LocalizedError {
+    public var errorDescription: String? { description }
+}
+
 /// Sends a request to a provider and returns a normalized event stream.
 ///
 /// The client is thin on purpose. It resolves which protocol a provider speaks,
@@ -158,15 +164,68 @@ public struct AIClient: Sendable {
         }
     }
 
+    // MARK: - Non-streaming
+
+    /// Sends a request and returns the complete response.
+    ///
+    /// The counterpart to ``stream(_:)`` for callers who want the outcome
+    /// rather than the events — no loop, no delta assembly:
+    ///
+    /// ```swift
+    /// let response = try await client.generate(options)
+    /// response.text
+    /// ```
+    ///
+    /// This is a genuinely non-streaming request on the wire, not a drained
+    /// stream. The body is decoded through the same mappers as a stream would
+    /// be, so the two paths cannot drift. To continue the conversation, append
+    /// ``AIResponse/assistantMessage`` to the prompt.
+    public func generate(_ options: CallOptions) async throws -> AIResponse {
+        guard let wire = provider.wireProtocol else {
+            throw AIClientError(kind: .unsupportedProtocol(provider.adapter ?? "none"))
+        }
+
+        let model = provider.model(options.model)
+        let encoded = encode(options, wire: wire, model: model, streaming: false)
+        let request = try makeRequest(
+            wire: wire, options: options, body: encoded.body, streaming: false
+        )
+
+        let (data, response) = try await session.data(for: request)
+
+        if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
+            throw AIClientError(kind: .http(
+                status: http.statusCode,
+                body: String(decoding: data, as: UTF8.self)
+            ))
+        }
+
+        // Same contract as a stream: `streamStart` first, carrying the
+        // encoding warnings, then the decoded parts.
+        var parts: [StreamPart] = [.streamStart(warnings: encoded.warnings)]
+        for part in NonStreamingResponse.decode(try JSONValue.decode(from: data), wire: wire) {
+            if case .streamStart = part { continue }
+            parts.append(part)
+        }
+
+        return AIResponse(parts: parts)
+    }
+
     // MARK: - Request construction
 
-    func encode(_ options: CallOptions, wire: WireProtocol, model: ModelInfo?) -> EncodedRequest {
+    func encode(
+        _ options: CallOptions,
+        wire: WireProtocol,
+        model: ModelInfo?,
+        streaming: Bool = true
+    ) -> EncodedRequest {
         switch wire {
         case .anthropicMessages:
             AnthropicMessagesRequest.encode(
                 options,
                 model: model,
-                reasoningToggle: provider.reasoningToggle
+                reasoningToggle: provider.reasoningToggle,
+                streaming: streaming
             )
         case .openAICompletions:
             // The dialect is selected from the provider, not the protocol:
@@ -176,22 +235,34 @@ public struct AIClient: Sendable {
                 options,
                 model: model,
                 dialect: .forProvider(provider.id),
-                reasoningToggle: provider.reasoningToggle
+                reasoningToggle: provider.reasoningToggle,
+                streaming: streaming
             )
         case .openAIResponses, .openAICodex:
-            OpenAIResponsesRequest.encode(options, model: model)
+            OpenAIResponsesRequest.encode(options, model: model, streaming: streaming)
         case .googleGenerativeAI:
+            // Gemini switches between streaming and not in the URL, not the body.
             GoogleGenerativeAIRequest.encode(options, model: model)
         }
     }
 
-    func makeRequest(wire: WireProtocol, options: CallOptions, body: JSONValue) throws -> URLRequest {
+    func makeRequest(
+        wire: WireProtocol,
+        options: CallOptions,
+        body: JSONValue,
+        streaming: Bool = true
+    ) throws -> URLRequest {
         let base = try resolveBaseURL()
-        var request = URLRequest(url: endpoint(wire: wire, base: base, model: options.model))
+        var request = URLRequest(
+            url: endpoint(wire: wire, base: base, model: options.model, streaming: streaming)
+        )
 
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "content-type")
-        request.setValue("text/event-stream", forHTTPHeaderField: "accept")
+        request.setValue(
+            streaming ? "text/event-stream" : "application/json",
+            forHTTPHeaderField: "accept"
+        )
 
         for (name, value) in authHeaders(wire: wire) {
             request.setValue(value, forHTTPHeaderField: name)
@@ -215,7 +286,7 @@ public struct AIClient: Sendable {
         return url
     }
 
-    func endpoint(wire: WireProtocol, base: URL, model: String) -> URL {
+    func endpoint(wire: WireProtocol, base: URL, model: String, streaming: Bool = true) -> URL {
         // Catalog base URLs are inconsistent about including a version prefix,
         // so it is added only when absent.
         func path(_ versioned: String, _ bare: String) -> String {
@@ -230,8 +301,12 @@ public struct AIClient: Sendable {
         case .openAIResponses, .openAICodex:
             return base.appending(path: path("v1", "responses"))
         case .googleGenerativeAI:
-            // Gemini names the model in the path and needs an explicit opt-in
-            // to Server-Sent Events; without `alt=sse` it streams a JSON array.
+            // Gemini switches methods rather than taking a `stream` flag, and
+            // streaming needs an explicit opt-in to Server-Sent Events —
+            // without `alt=sse` it streams a JSON array.
+            guard streaming else {
+                return base.appending(path: path("v1beta", "models/\(model):generateContent"))
+            }
             let url = base.appending(path: path("v1beta", "models/\(model):streamGenerateContent"))
             return URL(string: "\(url.absoluteString)?alt=sse") ?? url
         }

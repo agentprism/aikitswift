@@ -28,6 +28,34 @@ for try await part in try client.stream(CallOptions(model: "deepseek-v4-flash", 
 把 `"deepseek"` 换成 `"anthropic"`、`"google"` 或另外 46 家中的任意一家 —— 这个循环里
 不用改任何东西。
 
+只要结果、不关心过程事件时，循环也可以省掉：
+
+```swift
+let response = try await client.generate(options)   // wire 上是真正的非流式请求
+response.text          // 拼好的回答
+response.usage         // 花了多少 token
+```
+
+`generate` 发送的是真正的非流式请求，完整响应体走的是与流式相同的 mapper，两条路径
+不可能产生分歧。流式响应也能收拢成同一个聚合结果：
+`try await client.stream(options).collect()`。
+
+多轮对话（包括工具循环）是"追加"，不是"手工重建"：
+
+```swift
+prompt.append(response.assistantMessage)   // reasoning 签名原样保留
+for call in response.pendingToolCalls {
+    prompt.append(.toolResult(
+        toolCallId: call.toolCallId,
+        toolName: call.toolName,
+        result: try await run(call)
+    ))
+}
+```
+
+`assistantMessage` 保持块的顺序、保留 thinking 块的签名 —— 这正是手工重建最容易出错
+的两处，也是 Anthropic 拒收下一条请求的原因。
+
 ## 核心思路：按协议切，不按厂商切
 
 最该避免的错误是每家厂商写一套实现。内置的 catalog 里有 **49 家 provider、413 个模型，
@@ -69,7 +97,7 @@ AIKit 绕开了它。测试套件回放 **97 组真实录制的流 + 98 个完�
 
 ```
 $ swift test
-Test run with 164 tests in 16 suites passed
+Test run with 202 tests in 21 suites passed
 ```
 
 Fixture 按**协议**分组而非按厂商，所以 Chat Completions 这一个 mapper 同时被 7 家厂商的
@@ -216,7 +244,8 @@ guard ProviderCatalog.isLoaded else { fatalError(ProviderCatalog.diagnostics) }
 | 思考开 / 关 / 分级 | ✅ 全协议 |
 | 在线模型列表（`GET /models`） | ✅ 全协议 |
 | 上下文分摊 | ✅ |
-| 非流式响应 | ✅ 全协议 |
+| 非流式响应（`generate()`） | ✅ 全协议 |
+| 聚合结果与多轮回放（`AIResponse`） | ✅ |
 | Server tool 结果（代码执行 / MCP / 联网搜索） | ✅ 全协议 |
 | OAuth（PKCE + 回环监听） | ✅ |
 | 各家方言差异 | ✅ 见下 |

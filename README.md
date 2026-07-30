@@ -30,6 +30,36 @@ for try await part in try client.stream(CallOptions(model: "deepseek-v4-flash", 
 Change `"deepseek"` to `"anthropic"`, `"google"` or any of the other 46 providers.
 Nothing else in that loop changes.
 
+When the events don't matter and only the outcome does, skip the loop:
+
+```swift
+let response = try await client.generate(options)   // non-streaming on the wire
+response.text          // the answer, assembled
+response.usage         // what it cost
+```
+
+`generate` sends a genuinely non-streaming request and decodes the complete body
+through the same mappers a stream goes through, so the two paths cannot drift.
+A stream can be drained into the same aggregate with
+`try await client.stream(options).collect()`.
+
+Multi-turn — including the tool loop — is append, not reconstruct:
+
+```swift
+prompt.append(response.assistantMessage)   // reasoning signatures survive intact
+for call in response.pendingToolCalls {
+    prompt.append(.toolResult(
+        toolCallId: call.toolCallId,
+        toolName: call.toolName,
+        result: try await run(call)
+    ))
+}
+```
+
+`assistantMessage` keeps block order and thinking-block signatures — the two
+things hand-built replay messages get wrong, and the reason Anthropic rejects
+the next request when they are.
+
 ## The idea: protocols, not providers
 
 The mistake to avoid is writing one implementation per vendor. The bundled catalog
@@ -75,7 +105,7 @@ expected events out. No network, no credentials, no account.
 
 ```
 $ swift test
-Test run with 164 tests in 16 suites passed
+Test run with 202 tests in 21 suites passed
 ```
 
 Fixtures are grouped by **protocol**, not vendor, so the Chat Completions mapper is
@@ -232,7 +262,8 @@ all five protocols; the catalog covers 49 providers.
 | Thinking on / off / level | ✅ all protocols |
 | Live model listing (`GET /models`) | ✅ all protocols |
 | Context attribution | ✅ |
-| Non-streaming responses | ✅ all protocols |
+| Non-streaming responses (`generate()`) | ✅ all protocols |
+| Aggregated response + multi-turn replay (`AIResponse`) | ✅ |
 | Server-tool results (code exec, MCP, web search) | ✅ all protocols |
 | OAuth with PKCE + loopback | ✅ |
 | Per-provider dialect quirks | ✅ see below |

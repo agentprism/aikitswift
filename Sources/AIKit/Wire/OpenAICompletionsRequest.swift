@@ -12,24 +12,32 @@ public enum OpenAICompletionsRequest {
     ///   ``CompletionsDialect/forProvider(_:)`` for a catalog provider.
     /// - Parameter reasoningToggle: a provider-level override for how thinking
     ///   is switched on and off, from the catalog.
+    /// - Parameter streaming: whether the response should stream. `false`
+    ///   produces the body for a complete-response request — and must also omit
+    ///   `stream_options`, which providers reject on non-streaming requests.
     public static func encode(
         _ options: CallOptions,
         model: ModelInfo? = nil,
         dialect: CompletionsDialect = .default,
-        reasoningToggle: ProviderInfo.ReasoningToggle? = nil
+        reasoningToggle: ProviderInfo.ReasoningToggle? = nil,
+        streaming: Bool = true
     ) -> EncodedRequest {
         var body: [String: JSONValue] = [
-            "model": .string(options.model),
-            "stream": .bool(true),
+            "model": .string(options.model)
         ]
         var warnings: [Warning] = []
 
-        // Without this, a provider that supports it returns **no usage at all**
-        // on a streamed response — while a provider that does not support it
-        // rejects the request outright. The only flag that is dangerous in both
-        // directions, which is why it is dialect-driven rather than assumed.
-        if dialect.supportsUsageInStreaming {
-            body["stream_options"] = .object(["include_usage": .bool(true)])
+        if streaming {
+            body["stream"] = .bool(true)
+
+            // Without this, a provider that supports it returns **no usage at
+            // all** on a streamed response — while a provider that does not
+            // support it rejects the request outright. The only flag that is
+            // dangerous in both directions, which is why it is dialect-driven
+            // rather than assumed.
+            if dialect.supportsUsageInStreaming {
+                body["stream_options"] = .object(["include_usage": .bool(true)])
+            }
         }
 
         body["messages"] = .array(encodeMessages(options.prompt, dialect: dialect))
