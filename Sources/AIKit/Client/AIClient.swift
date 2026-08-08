@@ -133,10 +133,15 @@ public struct AIClient: Sendable {
 
                     if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
                         // The body holds the provider's error detail, which is
-                        // the only useful thing about a failed request.
-                        var detail = ""
-                        for try await line in bytes.lines { detail += line }
-                        throw AIClientError(kind: .http(status: http.statusCode, body: detail))
+                        // the only useful thing about a failed request — so it
+                        // is collected verbatim. Reading it as lines would drop
+                        // the line breaks and run the words together.
+                        var detail: [UInt8] = []
+                        for try await byte in bytes { detail.append(byte) }
+                        throw AIClientError(kind: .http(
+                            status: http.statusCode,
+                            body: String(decoding: detail, as: UTF8.self)
+                        ))
                     }
 
                     var mapper = wire.makeMapper()

@@ -108,17 +108,51 @@ public struct SSEParser: Sendable {
 
 /// Wraps a byte stream — typically `URLSession.bytes(for:).0` — as a stream of
 /// parsed Server-Sent Events.
+///
+/// The lines are split here rather than by `AsyncSequence.lines`, which
+/// **discards empty lines**. In text that is invisible; in SSE the blank line
+/// *is* the frame delimiter, so every payload of a response merges into one
+/// event and the wire decoders then reject it as `The given data was not valid
+/// JSON` — a whole conversation lost to a line splitter being helpful.
 public func sseEvents<Bytes: AsyncSequence & Sendable>(
     from bytes: Bytes
 ) -> AsyncThrowingStream<SSEEvent, any Error> where Bytes.Element == UInt8 {
     AsyncThrowingStream { continuation in
         let task = Task {
             var parser = SSEParser()
+            var line: [UInt8] = []
+            // Set by a CR so the LF of a CRLF pair is not read as a second
+            // terminator. A lone CR terminates a line on its own, per spec.
+            var afterCR = false
+
+            func flush() {
+                if let event = parser.push(line: String(decoding: line, as: UTF8.self)) {
+                    continuation.yield(event)
+                }
+                line.removeAll(keepingCapacity: true)
+            }
+
             do {
-                for try await line in bytes.lines {
-                    if let event = parser.push(line: line) {
-                        continuation.yield(event)
+                for try await byte in bytes {
+                    switch byte {
+                    case UInt8(ascii: "\r"):
+                        afterCR = true
+                        flush()
+                    case UInt8(ascii: "\n"):
+                        if afterCR {
+                            afterCR = false
+                            continue
+                        }
+                        flush()
+                    default:
+                        afterCR = false
+                        line.append(byte)
                     }
+                }
+
+                // Trailing bytes with no terminator are still a line.
+                if !line.isEmpty {
+                    flush()
                 }
                 if let event = parser.finish() {
                     continuation.yield(event)
