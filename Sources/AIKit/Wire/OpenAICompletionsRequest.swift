@@ -40,7 +40,15 @@ public enum OpenAICompletionsRequest {
             }
         }
 
-        body["messages"] = .array(encodeMessages(options.prompt, dialect: dialect))
+        // The model's own declaration wins; the dialect covers a model id the
+        // catalog has never seen (a custom endpoint, a model shipped since the
+        // catalog was cut).
+        let reasoningField = model?.interleavedReasoningField ?? dialect.interleavedReasoningField
+        body["messages"] = .array(encodeMessages(
+            options.prompt,
+            dialect: dialect,
+            interleavedReasoningField: reasoningField
+        ))
 
         if let maxTokens = options.maxOutputTokens {
             // Reasoning models rejected the older `max_tokens` in favour of
@@ -105,7 +113,11 @@ public enum OpenAICompletionsRequest {
 
     // MARK: - Messages
 
-    private static func encodeMessages(_ prompt: Prompt, dialect: CompletionsDialect) -> [JSONValue] {
+    private static func encodeMessages(
+        _ prompt: Prompt,
+        dialect: CompletionsDialect,
+        interleavedReasoningField: String? = nil
+    ) -> [JSONValue] {
         var messages: [JSONValue] = []
 
         for message in prompt {
@@ -129,7 +141,10 @@ public enum OpenAICompletionsRequest {
                 }
 
             case .assistant:
-                messages.append(encodeAssistant(message))
+                messages.append(encodeAssistant(
+                    message,
+                    interleavedReasoningField: interleavedReasoningField
+                ))
 
             case .system, .user:
                 messages.append(encodeSimple(message))
@@ -163,12 +178,28 @@ public enum OpenAICompletionsRequest {
         return .object(["role": .string(message.role.rawValue), "content": .array(parts)])
     }
 
-    private static func encodeAssistant(_ message: Message) -> JSONValue {
+    private static func encodeAssistant(
+        _ message: Message,
+        interleavedReasoningField: String? = nil
+    ) -> JSONValue {
         var encoded: [String: JSONValue] = ["role": "assistant"]
 
         let text = message.text
         if !text.isEmpty {
             encoded["content"] = .string(text)
+        }
+
+        // Only for the providers that ask for it, and only when this message
+        // actually carried thinking — a summary or a hand-written assistant
+        // turn has none, and inventing an empty string for it is its own kind
+        // of wrong answer.
+        if let field = interleavedReasoningField {
+            let reasoning = message.content.compactMap { part in
+                if case .reasoning(let text, _) = part { return text } else { return nil }
+            }.joined()
+            if !reasoning.isEmpty {
+                encoded[field] = .string(reasoning)
+            }
         }
 
         let calls: [JSONValue] = message.content.compactMap { part in

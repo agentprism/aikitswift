@@ -71,6 +71,16 @@ public struct CompletionsDialect: Sendable, Hashable {
     /// Whether the `store` field is accepted.
     public var supportsStore: Bool
     public var thinkingFormat: ThinkingFormat
+    /// The field an assistant message's own thinking must be replayed in, for
+    /// the providers that require it. Nil — the overwhelming majority — means
+    /// reasoning is write-only and is dropped from the history.
+    ///
+    /// This is the fallback for a model the catalog does not describe; the
+    /// model's own `interleaved.field` wins when there is one. Getting it
+    /// wrong in either direction is a 400: DeepSeek rejects a thinking-mode
+    /// tool request that omits `reasoning_content`, and providers that have
+    /// never heard of the field reject a request that carries it.
+    public var interleavedReasoningField: String?
 
     public init(
         maxTokensField: MaxTokensField = .maxTokens,
@@ -79,7 +89,8 @@ public struct CompletionsDialect: Sendable, Hashable {
         requiresToolResultName: Bool = false,
         supportsUsageInStreaming: Bool = true,
         supportsStore: Bool = false,
-        thinkingFormat: ThinkingFormat = .openai
+        thinkingFormat: ThinkingFormat = .openai,
+        interleavedReasoningField: String? = nil
     ) {
         self.maxTokensField = maxTokensField
         self.supportsStrict = supportsStrict
@@ -88,6 +99,7 @@ public struct CompletionsDialect: Sendable, Hashable {
         self.supportsUsageInStreaming = supportsUsageInStreaming
         self.supportsStore = supportsStore
         self.thinkingFormat = thinkingFormat
+        self.interleavedReasoningField = interleavedReasoningField
     }
 
     /// The conservative baseline: what a generic OpenAI-compatible endpoint
@@ -113,7 +125,15 @@ public struct CompletionsDialect: Sendable, Hashable {
             supportsDeveloperRole: true,
             supportsStore: true
         )),
-        (["deepseek"], CompletionsDialect(thinkingFormat: .deepseek)),
+        (["deepseek"], CompletionsDialect(
+            thinkingFormat: .deepseek,
+            // Thinking is on by default here, and a thinking-mode request that
+            // carries `tools` must replay every intermediate assistant's
+            // `reasoning_content` or the API answers 400. An agent loop hits
+            // that on its second request — the one right after the first tool
+            // call — so the whole provider is unusable without this.
+            interleavedReasoningField: "reasoning_content"
+        )),
         (["zai", "zhipuai"], CompletionsDialect(
             // Rejects `strict` on tool definitions.
             supportsStrict: false,

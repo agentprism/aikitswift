@@ -57,6 +57,25 @@ public struct ModelInfo: Sendable, Hashable, Codable {
         }
     }
 
+    /// How a model's thinking must be carried back across a tool-calling turn.
+    ///
+    /// Most reasoning models treat their own thinking as write-only: it comes
+    /// back on the response and is discarded from the history. A few do not.
+    /// DeepSeek's thinking models require the `reasoning_content` of every
+    /// intermediate assistant message to be replayed verbatim on any request
+    /// that carries `tools`, and answer a request that omits it with a 400 —
+    /// which makes this the difference between an agent loop that runs and one
+    /// that dies on its second request.
+    ///
+    /// `field` names the request field the text goes back in.
+    public struct Interleaved: Sendable, Hashable, Codable {
+        public var field: String?
+
+        public init(field: String? = nil) {
+            self.field = field
+        }
+    }
+
     public struct Limit: Sendable, Hashable, Codable {
         /// Context window, in tokens. The denominator for a context-usage report.
         public var context: Int?
@@ -80,6 +99,9 @@ public struct ModelInfo: Sendable, Hashable, Codable {
     /// How this model's thinking can be controlled — toggled, tuned by effort,
     /// or given a token budget. Often several at once.
     public var reasoningOptions: [ReasoningOption]?
+    /// Whether this model's thinking has to be replayed back to it. See
+    /// ``ModelInfo/Interleaved``.
+    public var interleaved: Interleaved?
     public var toolCall: Bool?
     public var structuredOutput: Bool?
 
@@ -105,6 +127,7 @@ public struct ModelInfo: Sendable, Hashable, Codable {
         attachment: Bool? = nil,
         reasoning: Reasoning? = nil,
         reasoningOptions: [ReasoningOption]? = nil,
+        interleaved: Interleaved? = nil,
         toolCall: Bool? = nil,
         structuredOutput: Bool? = nil,
         temperature: Bool? = nil,
@@ -122,6 +145,7 @@ public struct ModelInfo: Sendable, Hashable, Codable {
         self.attachment = attachment
         self.reasoning = reasoning
         self.reasoningOptions = reasoningOptions
+        self.interleaved = interleaved
         self.toolCall = toolCall
         self.structuredOutput = structuredOutput
         self.temperature = temperature
@@ -137,6 +161,12 @@ public struct ModelInfo: Sendable, Hashable, Codable {
     public var maxOutputTokens: Int? { limit?.output }
     public var supportsTools: Bool { toolCall ?? false }
     public var supportsReasoning: Bool { reasoning?.supported ?? false }
+    /// The request field this model's own thinking must be replayed in, if it
+    /// demands that at all. Nil for the overwhelming majority.
+    public var interleavedReasoningField: String? {
+        guard let field = interleaved?.field, !field.isEmpty else { return nil }
+        return field
+    }
     /// Newer models reject `temperature`; absence of the flag means unknown, so
     /// it is treated as accepted.
     public var supportsTemperature: Bool { temperature ?? true }

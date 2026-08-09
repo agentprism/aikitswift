@@ -280,6 +280,83 @@ struct DialectTests {
         }
     }
 
+    // MARK: - Interleaved reasoning
+
+    /// One assistant turn of the shape that breaks DeepSeek: thinking, then a
+    /// tool call, then the result coming back.
+    private static let toolTurn: Prompt = [
+        .user("how did I sleep"),
+        Message(role: .assistant, content: [
+            .reasoning("the user wants last night, call sleep_summary", providerMetadata: nil),
+            .toolCall(ToolCall(toolCallId: "c1", toolName: "sleep_summary", input: "{\"days\":7}")),
+        ]),
+        .toolResult(toolCallId: "c1", toolName: "sleep_summary", result: .string("5 nights")),
+    ]
+
+    @Test("DeepSeek gets the assistant's thinking replayed back")
+    func replaysReasoningForDeepSeek() {
+        // Without this the API answers 400 on every request after the first
+        // tool call, which is every request an agent loop makes.
+        let body = OpenAICompletionsRequest.encode(
+            CallOptions(model: "deepseek-reasoner", prompt: Self.toolTurn),
+            dialect: .forProvider("deepseek")
+        ).body
+
+        let assistant = body["messages"]?[1]
+        #expect(assistant?["reasoning_content"]?.stringValue
+            == "the user wants last night, call sleep_summary")
+        #expect(assistant?["tool_calls"]?[0]?["id"]?.stringValue == "c1")
+    }
+
+    @Test("everyone else still gets no reasoning field")
+    func dropsReasoningElsewhere() {
+        // The mirror image of the DeepSeek 400: a provider that has never
+        // heard of the field rejects a request that carries it.
+        let body = OpenAICompletionsRequest.encode(
+            CallOptions(model: "m", prompt: Self.toolTurn),
+            dialect: .default
+        ).body
+
+        #expect(body["messages"]?[1]?["reasoning_content"] == nil)
+    }
+
+    @Test("an assistant turn with no thinking carries no empty field")
+    func omitsFieldWithoutReasoning() {
+        // Summaries and hand-written assistant turns have no thinking, and an
+        // empty string is not the same claim as absence.
+        let body = OpenAICompletionsRequest.encode(
+            CallOptions(model: "deepseek-reasoner", prompt: [.user("hi"), .assistant("hello")]),
+            dialect: .forProvider("deepseek")
+        ).body
+
+        #expect(body["messages"]?[1]?["reasoning_content"] == nil)
+    }
+
+    @Test("the model's own declaration wins over the dialect")
+    func modelDeclarationWins() {
+        // The dialect is the fallback for a model id the catalog predates.
+        let model = ModelInfo(id: "custom", interleaved: .init(field: "thought_content"))
+        let body = OpenAICompletionsRequest.encode(
+            CallOptions(model: "custom", prompt: Self.toolTurn),
+            model: model,
+            dialect: .forProvider("deepseek")
+        ).body
+
+        #expect(body["messages"]?[1]?["thought_content"]?.stringValue != nil)
+        #expect(body["messages"]?[1]?["reasoning_content"] == nil)
+    }
+
+    @Test("the catalog's DeepSeek thinking models declare the requirement")
+    func catalogDeclaresInterleaved() {
+        for id in ["deepseek-reasoner", "deepseek-v4-flash", "deepseek-v4-pro"] {
+            let model = ProviderCatalog.model(id, provider: "deepseek")?.1
+            #expect(model?.interleavedReasoningField == "reasoning_content")
+        }
+        // The non-thinking model has nothing to replay.
+        let chat = ProviderCatalog.model("deepseek-chat", provider: "deepseek")?.1
+        #expect(chat?.interleavedReasoningField == nil)
+    }
+
     @Test("the client selects the dialect from the provider")
     func clientAppliesDialect() throws {
         // Selection is per provider, not per protocol — that is the whole
