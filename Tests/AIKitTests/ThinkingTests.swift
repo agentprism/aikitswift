@@ -31,10 +31,10 @@ struct ThinkingTests {
 
     @Test("older Anthropic models take a token budget instead")
     func anthropicBudgetTokens() throws {
-        let model = try #require(ProviderCatalog.model("claude-opus-4-1", provider: "anthropic")?.1)
+        let model = try #require(ProviderCatalog.model("claude-sonnet-4-5", provider: "anthropic")?.1)
 
         let body = AnthropicMessagesRequest.encode(
-            Self.options(.level(.high), model: "claude-opus-4-1"), model: model
+            Self.options(.level(.high), model: "claude-sonnet-4-5"), model: model
         ).body
 
         #expect(body["thinking"]?["type"]?.stringValue == "enabled")
