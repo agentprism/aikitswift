@@ -61,6 +61,23 @@ struct ClientTests {
         #expect(url.absoluteString.contains("alt=sse"))
     }
 
+    @Test("the built-in Google provider resolves its official endpoint")
+    func googleResolvesBaseURL() throws {
+        let subject = try client("google")
+        let base = try subject.resolveBaseURL()
+        let url = subject.endpoint(
+            wire: .googleGenerativeAI,
+            base: base,
+            model: "gemini-3.5-flash"
+        )
+
+        #expect(base.absoluteString == "https://generativelanguage.googleapis.com")
+        #expect(
+            url.absoluteString
+                == "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:streamGenerateContent?alt=sse"
+        )
+    }
+
     @Test("auth headers differ per protocol")
     func usesCorrectAuthHeaders() throws {
         let subject = try client("anthropic")

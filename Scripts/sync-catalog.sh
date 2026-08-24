@@ -52,6 +52,21 @@ models = 0
 for path in sorted(glob.glob(os.path.join(dest, "*.json"))):
     with open(path) as fh:
         data = json.load(fh)
+
+    # Upstream leaves Google's endpoint unset because some hosts inject it at
+    # runtime. AIKit is also used directly by mobile apps, where selecting the
+    # built-in Google provider must be enough to make a request.
+    if data.get("id") == "google" and not data.get("api"):
+        patched = {}
+        for key, value in data.items():
+            patched[key] = value
+            if key == "name":
+                patched["api"] = "https://generativelanguage.googleapis.com"
+        data = patched
+        with open(path, "w") as fh:
+            json.dump(data, fh, ensure_ascii=False, indent=2)
+            fh.write("\n")
+
     adapters[data.get("adapter", "?")] += 1
     models += len(data.get("models", []))
 

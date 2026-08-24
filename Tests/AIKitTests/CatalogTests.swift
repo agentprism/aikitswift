@@ -53,6 +53,10 @@ struct CatalogTests {
         #expect(ProviderCatalog.provider("anthropic")?.wireProtocol == .anthropicMessages)
         #expect(ProviderCatalog.provider("deepseek")?.wireProtocol == .openAICompletions)
         #expect(ProviderCatalog.provider("google")?.wireProtocol == .googleGenerativeAI)
+        #expect(
+            ProviderCatalog.provider("google")?.api
+                == "https://generativelanguage.googleapis.com"
+        )
         #expect(ProviderCatalog.provider("nope-not-real") == nil)
     }
 
