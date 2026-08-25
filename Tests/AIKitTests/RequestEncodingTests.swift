@@ -209,6 +209,43 @@ struct RequestEncodingTests {
         #expect(body["tools"]?[0]?["functionDeclarations"]?.arrayValue?.count == 1)
     }
 
+    @Test("Google sends tool schemas verbatim under parametersJsonSchema")
+    func googleSendsJSONSchemaParameters() {
+        // `parameters` is an OpenAPI-subset proto with a fixed field list: a
+        // schema carrying `additionalProperties` (or any other keyword it never
+        // declared) is rejected with `Unknown name "additionalProperties" ...
+        // Cannot find field`, and nothing in the request survives it.
+        let strictTool = ToolDefinition(
+            name: "ask_user",
+            description: "Ask one question",
+            inputSchema: [
+                "type": "object",
+                "properties": [
+                    "options": [
+                        "type": "array",
+                        "items": [
+                            "type": "object",
+                            "properties": ["label": ["type": "string"]],
+                            "additionalProperties": false,
+                        ],
+                    ]
+                ],
+                "additionalProperties": false,
+            ]
+        )
+        let body = GoogleGenerativeAIRequest.encode(
+            CallOptions(model: "gemini-3-pro", prompt: [.user("hi")], tools: [strictTool])
+        ).body
+
+        let declaration = body["tools"]?[0]?["functionDeclarations"]?[0]
+        #expect(declaration?["parameters"] == nil)
+        #expect(declaration?["parametersJsonSchema"]?["additionalProperties"]?.boolValue == false)
+        // Nested schemas travel untouched too; the API reports each offending
+        // path separately, so a top-level-only fix still fails the request.
+        let items = declaration?["parametersJsonSchema"]?["properties"]?["options"]?["items"]
+        #expect(items?["additionalProperties"]?.boolValue == false)
+    }
+
     @Test("Google sends tool arguments as an object, not a string")
     func googleSendsArgsAsObject() {
         let body = GoogleGenerativeAIRequest.encode(

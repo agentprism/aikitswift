@@ -167,10 +167,18 @@ public enum GoogleGenerativeAIRequest {
         return .object(["result": value])
     }
 
+    /// Tool parameters go in `parametersJsonSchema`, not `parameters`.
+    ///
+    /// `parameters` is an OpenAPI-subset proto with a fixed field list, so any
+    /// JSON Schema keyword it never declared — `additionalProperties` is the
+    /// one callers hit first — is rejected outright with `Invalid JSON payload
+    /// received. Unknown name "additionalProperties"`, and the whole request
+    /// fails. `parametersJsonSchema` takes the schema as-is, which is what
+    /// every other wire in here does with the same `inputSchema`.
     private static func encodeTool(_ tool: ToolDefinition) -> JSONValue {
         var declaration: [String: JSONValue] = [
             "name": .string(tool.name),
-            "parameters": tool.inputSchema,
+            "parametersJsonSchema": tool.inputSchema,
         ]
         if let description = tool.description {
             declaration["description"] = .string(description)
