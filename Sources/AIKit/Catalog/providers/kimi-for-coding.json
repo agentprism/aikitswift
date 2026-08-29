@@ -188,9 +188,5 @@
   ],
   "api": "https://api.kimi.com/coding/v1",
   "doc": "https://www.kimi.com/code/docs/en/kimi-code/models.html",
-  "display_name": "Kimi For Coding",
-  "env": [
-    "KIMI_API_KEY"
-  ],
-  "npm": "@ai-sdk/anthropic"
+  "display_name": "Kimi For Coding"
 }

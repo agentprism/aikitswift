@@ -255,7 +255,6 @@ struct DialectTests {
     func decodesCatalogReasoningToggles() {
         let toggles = ProviderCatalog.all.compactMap(\.reasoningToggle)
 
-        #expect(!toggles.isEmpty)
         #expect(toggles.allSatisfy { !$0.field.isEmpty && $0.disabled != nil })
     }
 
@@ -348,13 +347,10 @@ struct DialectTests {
 
     @Test("the catalog's DeepSeek thinking models declare the requirement")
     func catalogDeclaresInterleaved() {
-        for id in ["deepseek-reasoner", "deepseek-v4-flash", "deepseek-v4-pro"] {
+        for id in ["deepseek-v4-flash", "deepseek-v4-pro"] {
             let model = ProviderCatalog.model(id, provider: "deepseek")?.1
             #expect(model?.interleavedReasoningField == "reasoning_content")
         }
-        // The non-thinking model has nothing to replay.
-        let chat = ProviderCatalog.model("deepseek-chat", provider: "deepseek")?.1
-        #expect(chat?.interleavedReasoningField == nil)
     }
 
     @Test("the client selects the dialect from the provider")

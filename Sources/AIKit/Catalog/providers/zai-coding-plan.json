@@ -346,9 +346,5 @@
     }
   ],
   "api": "https://api.z.ai/api/coding/paas/v4",
-  "doc": "https://docs.z.ai/devpack/overview",
-  "env": [
-    "ZHIPU_API_KEY"
-  ],
-  "npm": "@ai-sdk/openai-compatible"
+  "doc": "https://docs.z.ai/devpack/overview"
 }

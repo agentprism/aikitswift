@@ -3,21 +3,22 @@
 Vendored provider definitions. Each file names a provider's base URL, its
 models, and the `adapter` identifying which wire protocol it speaks.
 
-- Upstream commit: `a4d0d13`
-- Providers: 49
-- Models: 1875
-- Updated from upstream: 38
-- Local-only (unchanged): 11
+- Upstream commit: `a4d0d13ea`
+- Providers: 186
+- Models: 6199
+- Updated from upstream: 186
+- Added from upstream: 0
+- Removed from previous catalog: 0
+- Unsupported upstream providers omitted: 21
 
 ## Adapters in use
 
 | Adapter | Providers |
 |---|---|
-| `openai` | 38 |
-| `anthropic` | 7 |
-| `openai-responses` | 2 |
-| `gemini` | 1 |
-| `openai-codex` | 1 |
+| `openai` | 173 |
+| `anthropic` | 10 |
+| `gemini` | 2 |
+| `openai-responses` | 1 |
 
 This distribution is the argument for the whole architecture: many
 providers, few protocols. Implementing one adapter correctly serves every

@@ -587,10 +587,5 @@
       "type": "chat"
     }
   ],
-  "api": "https://api.x.ai/v1",
-  "doc": "https://docs.x.ai/docs/models",
-  "env": [
-    "XAI_API_KEY"
-  ],
-  "npm": "@ai-sdk/xai"
+  "doc": "https://docs.x.ai/docs/models"
 }

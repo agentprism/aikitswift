@@ -1,0 +1,87 @@
+{
+  "id": "hetzner",
+  "name": "Hetzner",
+  "adapter": "openai",
+  "models": [
+    {
+      "id": "Qwen/Qwen3.6-35B-A3B-FP8",
+      "name": "Qwen3.6 35B A3B FP8",
+      "description": "Open multimodal Qwen MoE for local agents that need vision, audio, and code",
+      "family": "qwen",
+      "attachment": true,
+      "reasoning": {
+        "supported": true,
+        "default": false
+      },
+      "reasoning_options": [],
+      "tool_call": true,
+      "structured_output": true,
+      "temperature": true,
+      "release_date": "2026-04-17",
+      "last_updated": "2026-04-17",
+      "modalities": {
+        "input": [
+          "text",
+          "image"
+        ],
+        "output": [
+          "text"
+        ]
+      },
+      "open_weights": true,
+      "limit": {
+        "context": 262144,
+        "output": 262144
+      },
+      "status": "beta",
+      "cost": {
+        "input": 0,
+        "output": 0,
+        "cache_read": 0
+      },
+      "display_name": "Qwen3.6 35B A3B FP8",
+      "type": "chat"
+    },
+    {
+      "id": "Qwen3.8-27B",
+      "name": "Qwen3.8-27B",
+      "description": "Dense 27B vision-language model for coding, agent tasks, and image and video understanding",
+      "family": "qwen",
+      "attachment": true,
+      "reasoning": {
+        "supported": true,
+        "default": false
+      },
+      "reasoning_options": [],
+      "tool_call": true,
+      "structured_output": true,
+      "temperature": true,
+      "release_date": "2026-08-14",
+      "last_updated": "2026-08-14",
+      "modalities": {
+        "input": [
+          "text",
+          "image"
+        ],
+        "output": [
+          "text"
+        ]
+      },
+      "open_weights": true,
+      "limit": {
+        "context": 262144,
+        "output": 262144
+      },
+      "status": "beta",
+      "cost": {
+        "input": 0,
+        "output": 0,
+        "cache_read": 0
+      },
+      "display_name": "Qwen3.8-27B",
+      "type": "chat"
+    }
+  ],
+  "api": "https://inference.hetzner.com/api/v1",
+  "doc": "https://experiments.hetzner.com/docs/inference"
+}

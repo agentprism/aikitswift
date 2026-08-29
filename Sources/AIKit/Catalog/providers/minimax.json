@@ -283,9 +283,5 @@
     }
   ],
   "api": "https://api.minimax.io/anthropic/v1",
-  "doc": "https://platform.minimax.io/docs/guides/quickstart",
-  "env": [
-    "MINIMAX_API_KEY"
-  ],
-  "npm": "@ai-sdk/anthropic"
+  "doc": "https://platform.minimax.io/docs/guides/quickstart"
 }

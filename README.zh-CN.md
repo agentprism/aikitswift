@@ -58,7 +58,7 @@ for call in response.pendingToolCalls {
 
 ## 核心思路：按协议切，不按厂商切
 
-最该避免的错误是每家厂商写一套实现。内置的 catalog 里有 **49 家 provider、413 个模型，
+最该避免的错误是每家厂商写一套实现。内置的 catalog 里有 **186 家 provider、6199 个模型，
 但只有 5 种 wire protocol** —— 因为大多数厂商说的是别人的协议：
 
 | 协议 | provider 数 |
@@ -75,7 +75,7 @@ AIKit 就沿着这条缝切开：
 Sources/AIKit/
   Spec/        归一化词汇表 —— 所有 provider 都映射到同一个 enum
   Wire/        每个协议一份实现   （5 个，真正的工作量在这）
-  Providers/   catalog            （49 个 JSON 配置，纯数据）
+  Providers/   catalog            （186 个 JSON 配置，纯数据）
   Tokens/      上下文分摊
   Client/      把它们连起来的管道
 ```
@@ -89,7 +89,7 @@ Swift LLM 客户端把 provider 层塞在一个 6000 行的文件里，支持的
 
 ## 没有 API key 也能测
 
-做 provider 集成的人都会遇到同一个问题：调不通的东西没法测，而没人手里有 49 家的 key。
+做 provider 集成的人都会遇到同一个问题：调不通的东西没法测，而没人手里有 186 家的 key。
 
 AIKit 绕开了它。测试套件回放 **97 组真实录制的流 + 98 个完整响应体**（从 [AI SDK][aisdk]
 按 MIT 协议 vendored 过来），断言归一化后的输出结构正确。录制的字节进，期望的事件出。
@@ -230,7 +230,7 @@ guard ProviderCatalog.isLoaded else { fatalError(ProviderCatalog.diagnostics) }
 
 ## 现状
 
-早期，API 会变。五种协议的流式响应和请求编码都能用了，catalog 覆盖 49 家。
+早期，API 会变。五种协议的流式响应和请求编码都能用了，catalog 覆盖 186 家。
 
 | | |
 |---|---|
@@ -240,7 +240,7 @@ guard ProviderCatalog.isLoaded else { fatalError(ProviderCatalog.diagnostics) }
 | OpenAI Chat Completions | ✅ 流式 + 请求 |
 | OpenAI Responses | ✅ 流式 + 请求 |
 | Google Generative AI | ✅ 流式 + 请求 |
-| Provider catalog | ✅ 49 家、413 模型 |
+| Provider catalog | ✅ 186 家、6199 模型 |
 | 思考开 / 关 / 分级 | ✅ 全协议 |
 | 在线模型列表（`GET /models`） | ✅ 全协议 |
 | 上下文分摊 | ✅ |

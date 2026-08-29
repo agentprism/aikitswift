@@ -157,8 +157,14 @@ public struct ModelInfo: Sendable, Hashable, Codable {
         self.lastUpdated = lastUpdated
     }
 
-    public var contextWindow: Int? { limit?.context }
-    public var maxOutputTokens: Int? { limit?.output }
+    public var contextWindow: Int? {
+        guard let context = limit?.context, context > 0 else { return nil }
+        return context
+    }
+    public var maxOutputTokens: Int? {
+        guard let output = limit?.output, output > 0 else { return nil }
+        return output
+    }
     public var supportsTools: Bool { toolCall ?? false }
     public var supportsReasoning: Bool { reasoning?.supported ?? false }
     /// The request field this model's own thinking must be replayed in, if it

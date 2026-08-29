@@ -309,9 +309,5 @@
     }
   ],
   "api": "https://api.stepfun.com/v1",
-  "doc": "https://platform.stepfun.com/docs/zh/overview/concept",
-  "env": [
-    "STEPFUN_API_KEY"
-  ],
-  "npm": "@ai-sdk/openai-compatible"
+  "doc": "https://platform.stepfun.com/docs/zh/overview/concept"
 }

@@ -2363,9 +2363,5 @@
     }
   ],
   "api": "https://api.openai.com/v1",
-  "doc": "https://platform.openai.com/docs/models",
-  "env": [
-    "OPENAI_API_KEY"
-  ],
-  "npm": "@ai-sdk/openai"
+  "doc": "https://platform.openai.com/docs/models"
 }

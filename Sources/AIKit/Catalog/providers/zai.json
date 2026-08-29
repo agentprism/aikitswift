@@ -719,9 +719,5 @@
     }
   ],
   "api": "https://api.z.ai/api/paas/v4",
-  "doc": "https://docs.z.ai/guides/overview/pricing",
-  "env": [
-    "ZHIPU_API_KEY"
-  ],
-  "npm": "@ai-sdk/openai-compatible"
+  "doc": "https://docs.z.ai/guides/overview/pricing"
 }

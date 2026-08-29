@@ -480,9 +480,5 @@
     }
   ],
   "api": "https://open.bigmodel.cn/api/coding/paas/v4",
-  "doc": "https://docs.bigmodel.cn/cn/coding-plan/overview",
-  "env": [
-    "ZHIPU_API_KEY"
-  ],
-  "npm": "@ai-sdk/openai-compatible"
+  "doc": "https://docs.bigmodel.cn/cn/coding-plan/overview"
 }

@@ -2,9 +2,9 @@
 #
 # Syncs the provider catalog from a models.dev checkout or live API.
 #
-# Upstream moved from per-provider JSON files to TOML plus a generated
-# api.json. This script pulls the latest catalog, converts it to the
-# vendored JSON shape AIKit decodes, and preserves local-only providers.
+# models.dev owns the provider/model metadata. AIKit keeps its small, stable
+# JSON shape as a compatibility boundary and only copies fields that its
+# Codable types understand at runtime.
 #
 # Usage:
 #   Scripts/sync-catalog.sh <path-to-models.dev-checkout>
@@ -26,49 +26,47 @@ fi
 
 UPSTREAM_SHA="$(git -C "$SRC" rev-parse --short HEAD 2>/dev/null || echo unknown)"
 
-API_JSON="$SRC/.sync/aikit-api.json"
-mkdir -p "$SRC/.sync"
+API_JSON="${AIKIT_CATALOG_API:-$SRC/.sync/aikit-api.json}"
 
-if [ -f "$SRC/packages/web/dist/_api.json" ]; then
-    cp "$SRC/packages/web/dist/_api.json" "$API_JSON"
+if [ -n "${AIKIT_CATALOG_API:-}" ] && [ ! -f "$API_JSON" ]; then
+    echo "error: AIKIT_CATALOG_API does not exist: $API_JSON" >&2
+    exit 1
+elif [ -f "$SRC/packages/web/dist/_api.json" ]; then
+    mkdir -p "$SRC/.sync"
+    cp "$SRC/packages/web/dist/_api.json" "$SRC/.sync/aikit-api.json"
+    API_JSON="$SRC/.sync/aikit-api.json"
 elif [ -f "$API_JSON" ] && [ "$(find "$API_JSON" -mmin -60 2>/dev/null)" ]; then
     :
 else
+    mkdir -p "$SRC/.sync"
     echo "fetching https://models.dev/api.json"
     curl -fsSL --max-time 120 "https://models.dev/api.json" -o "$API_JSON"
 fi
 
 python3 - "$SRC" "$API_JSON" "$DEST" "$UPSTREAM_SHA" <<'PY'
-import json, os, sys, glob, collections, tomllib
+import json, os, sys, glob, collections
+try:
+    import tomllib
+except ImportError:
+    tomllib = None
 
 src_root, api_path, dest, sha = sys.argv[1:5]
 
 with open(api_path) as fh:
     upstream = json.load(fh)
 
-ALIASES = {
-    "moonshot": "moonshotai-cn",
-    "moonshot-ai": "moonshotai",
-    "qiniu": "qiniu-ai",
-    "siliconflow-com": "siliconflow",
-    "siliconflow": "siliconflow-cn",
-    "novita": "novita-ai",
-    "fireworks": "fireworks-ai",
-    "lm-studio": "lmstudio",
-    "vercel-ai-gateway": "vercel",
-    "bailian-coding-plan": "alibaba-coding-plan-cn",
-    "github": "github-copilot",
-    "step-plan": "stepfun-step-plan",
-}
-
-PRESERVE_API = {
-    "vercel-ai-gateway",
-    "github",
-    "custom-provider",
-    "flymux-anthropic",
-    "flymux-openai",
-    "next-api-oauth",
-    "openai-codex",
+# These are the protocol families AIKit implements. Provider packages with a
+# bespoke SDK are intentionally left out until AIKit has a matching wire
+# implementation; including them as OpenAI-compatible would be misleading.
+SUPPORTED_NPM = {
+    "@ai-sdk/anthropic": "anthropic",
+    "@ai-sdk/google": "gemini",
+    "@ai-sdk/google-vertex": "gemini",
+    "@ai-sdk/google-vertex/anthropic": "anthropic",
+    "@ai-sdk/openai": "openai",
+    "@ai-sdk/openai-compatible": "openai",
+    "@ai-sdk/xai": "openai",
+    "@openrouter/ai-sdk-provider": "openai",
 }
 
 DEFAULT_APIS = {
@@ -80,6 +78,8 @@ DEFAULT_APIS = {
 
 
 def read_provider_toml(provider_id):
+    if tomllib is None:
+        return {}
     path = os.path.join(src_root, "providers", provider_id, "provider.toml")
     if not os.path.isfile(path):
         return {}
@@ -90,17 +90,9 @@ def read_provider_toml(provider_id):
 def adapter_for(npm, provider_id, existing):
     if existing:
         return existing
-    if provider_id == "openai-codex":
-        return "openai-codex"
-    if provider_id == "flymux-openai":
+    if provider_id == "openai":
         return "openai-responses"
-    if npm in ("@ai-sdk/anthropic", "@ai-sdk/google-vertex/anthropic"):
-        return "anthropic"
-    if npm in ("@ai-sdk/google", "@ai-sdk/google-vertex"):
-        return "gemini"
-    if npm == "@ai-sdk/openai" and provider_id == "openai":
-        return "openai-responses"
-    return "openai"
+    return SUPPORTED_NPM.get(npm)
 
 
 def infer_type(model):
@@ -166,81 +158,110 @@ def transform_model(model, previous=None):
 
 
 def provider_api(local_id, upstream_id, upstream_entry, existing, toml):
-    if local_id in PRESERVE_API:
-        return existing.get("api")
     if toml.get("api"):
         return toml["api"]
-    if existing.get("api"):
-        return existing["api"]
     if local_id in DEFAULT_APIS:
         return DEFAULT_APIS[local_id]
     return upstream_entry.get("api")
 
 
 existing_paths = sorted(glob.glob(os.path.join(dest, "*.json")))
-updated = 0
-skipped = 0
-adapters = collections.Counter()
-model_count = 0
-
+existing_by_id = {}
 for path in existing_paths:
     with open(path) as fh:
-        existing = json.load(fh)
+        existing_by_id[json.load(fh)["id"]] = path
 
-    local_id = existing["id"]
-    upstream_id = ALIASES.get(local_id, local_id)
+updated = 0
+added = 0
+skipped = 0
+unsupported = 0
+adapters = collections.Counter()
+model_count = 0
+seen_paths = set()
+
+def sync_one(local_id, upstream_id, path, existing=None):
+    global updated, added, model_count
     upstream_entry = upstream.get(upstream_id)
-
     if upstream_entry is None:
-        skipped += 1
-        adapters[existing.get("adapter", "?")] += 1
-        model_count += len(existing.get("models", []))
-        continue
+        return False
 
     toml = read_provider_toml(upstream_id)
     npm = upstream_entry.get("npm") or toml.get("npm")
-    previous_models = {m["id"]: m for m in existing.get("models", [])}
+    adapter = adapter_for(npm, local_id, (existing or {}).get("adapter"))
+    if not adapter:
+        return False
 
-    models = []
-    for model_id in sorted(upstream_entry.get("models", {})):
-        models.append(
-            transform_model(
-                upstream_entry["models"][model_id],
-                previous_models.get(model_id),
-            )
+    previous_models = {m["id"]: m for m in (existing or {}).get("models", []) if "id" in m}
+    models = [
+        transform_model(
+            dict(upstream_entry["models"][model_id], id=upstream_entry["models"][model_id].get("id", model_id)),
+            previous_models.get(model_id),
         )
+        for model_id in sorted(upstream_entry.get("models", {}))
+    ]
 
     provider = {
         "id": local_id,
-        "name": upstream_entry.get("name") or existing.get("name"),
-        "adapter": adapter_for(npm, local_id, existing.get("adapter")),
+        "name": upstream_entry.get("name") or (existing or {}).get("name"),
+        "adapter": adapter,
         "models": models,
     }
 
-    api = provider_api(local_id, upstream_id, upstream_entry, existing, toml)
+    api = provider_api(local_id, upstream_id, upstream_entry, existing or {}, toml)
     if api:
         provider["api"] = api
 
-    for key in ("doc", "display_name", "env", "npm", "reasoning_toggle"):
-        if key in existing and key not in provider:
+    for key in ("doc", "display_name", "reasoning_toggle"):
+        if existing and key in existing:
             provider[key] = existing[key]
-        elif key in upstream_entry and key not in provider:
+        elif key in upstream_entry:
             provider[key] = upstream_entry[key]
-        elif key in toml and key not in provider:
+        elif key in toml:
             provider[key] = toml[key]
 
-    if local_id == "google" and not provider.get("api"):
+    if local_id in ("google", "google-vertex") and not provider.get("api"):
         provider["api"] = DEFAULT_APIS["google"]
+    elif local_id == "openai" and not provider.get("api"):
+        provider["api"] = DEFAULT_APIS["openai"]
+    elif local_id == "anthropic" and not provider.get("api"):
+        provider["api"] = DEFAULT_APIS["anthropic"]
 
     with open(path, "w") as fh:
         json.dump(provider, fh, ensure_ascii=False, indent=2)
         fh.write("\n")
 
-    updated += 1
-    adapters[provider.get("adapter", "?")] += 1
+    if existing:
+        updated += 1
+    else:
+        added += 1
+    adapters[adapter] += 1
     model_count += len(models)
+    seen_paths.add(path)
+    return True
 
-count = len(existing_paths)
+for upstream_id in sorted(upstream):
+    entry = upstream[upstream_id]
+    toml = read_provider_toml(upstream_id)
+    npm = entry.get("npm") or toml.get("npm")
+    if npm not in SUPPORTED_NPM:
+        unsupported += 1
+        continue
+    path = existing_by_id.get(upstream_id, os.path.join(dest, f"{upstream_id}.json"))
+    existing = None
+    if os.path.isfile(path):
+        with open(path) as fh:
+            existing = json.load(fh)
+    sync_one(upstream_id, upstream_id, path, existing)
+
+# The catalog is a mirror of models.dev's compatible subset. Remove files from
+# previous sync sources so stale aliases and local-only providers cannot leak
+# back into the shipped resource bundle.
+for path in existing_paths:
+    if path not in seen_paths and os.path.exists(path):
+        os.remove(path)
+        skipped += 1
+
+count = len(glob.glob(os.path.join(dest, "*.json")))
 lines = [
     "# Provider catalog provenance",
     "",
@@ -251,7 +272,9 @@ lines = [
     f"- Providers: {count}",
     f"- Models: {model_count}",
     f"- Updated from upstream: {updated}",
-    f"- Local-only (unchanged): {skipped}",
+    f"- Added from upstream: {added}",
+    f"- Removed from previous catalog: {skipped}",
+    f"- Unsupported upstream providers omitted: {unsupported}",
     "",
     "## Adapters in use",
     "",
@@ -273,7 +296,7 @@ lines += [
 with open(os.path.join(dest, os.pardir, "PROVENANCE.md"), "w") as fh:
     fh.write("\n".join(lines) + "\n")
 
-print(f"  {count} providers, {model_count} models ({updated} updated, {skipped} local-only)")
+print(f"  {count} providers, {model_count} models ({updated} updated, {added} added, {skipped} removed)")
 for adapter, n in adapters.most_common():
     print(f"    {adapter}: {n}")
 PY

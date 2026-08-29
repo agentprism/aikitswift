@@ -15774,9 +15774,5 @@
     }
   ],
   "api": "https://openrouter.ai/api/v1",
-  "doc": "https://openrouter.ai/models",
-  "env": [
-    "OPENROUTER_API_KEY"
-  ],
-  "npm": "@openrouter/ai-sdk-provider"
+  "doc": "https://openrouter.ai/models"
 }

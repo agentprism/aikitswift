@@ -709,9 +709,5 @@
     }
   ],
   "api": "https://api.anthropic.com",
-  "doc": "https://docs.anthropic.com/en/docs/about-claude/models",
-  "env": [
-    "ANTHROPIC_API_KEY"
-  ],
-  "npm": "@ai-sdk/anthropic"
+  "doc": "https://docs.anthropic.com/en/docs/about-claude/models"
 }
