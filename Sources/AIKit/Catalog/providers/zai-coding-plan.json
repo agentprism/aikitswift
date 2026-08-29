@@ -1,8 +1,7 @@
 {
   "id": "zai-coding-plan",
-  "api": "https://api.z.ai/api/coding/paas/v4",
-  "adapter": "openai",
   "name": "Z.AI Coding Plan",
+  "adapter": "openai",
   "models": [
     {
       "id": "glm-4.7",
@@ -47,18 +46,7 @@
         "cache_write": 0
       },
       "display_name": "GLM-4.7",
-      "type": "chat",
-      "extra_capabilities": {
-        "reasoning": {
-          "supported": true,
-          "interleaved": true,
-          "summaries": true,
-          "visibility": "summary",
-          "continuation": [
-            "thinking_blocks"
-          ]
-        }
-      }
+      "type": "chat"
     },
     {
       "id": "glm-5-turbo",
@@ -103,18 +91,105 @@
         "cache_write": 0
       },
       "display_name": "GLM-5-Turbo",
-      "type": "chat",
-      "extra_capabilities": {
-        "reasoning": {
-          "supported": true,
-          "continuation": [
-            "thinking_blocks"
-          ],
-          "interleaved": true,
-          "summaries": true,
-          "visibility": "summary"
+      "type": "chat"
+    },
+    {
+      "id": "glm-5.2",
+      "name": "GLM-5.2",
+      "description": "Open flagship GLM for long-horizon coding agents and million-token context work",
+      "family": "glm",
+      "attachment": false,
+      "reasoning": {
+        "supported": true,
+        "default": true
+      },
+      "reasoning_options": [
+        {
+          "type": "effort",
+          "values": [
+            "high",
+            "max"
+          ]
         }
-      }
+      ],
+      "tool_call": true,
+      "interleaved": {
+        "field": "reasoning_content"
+      },
+      "structured_output": true,
+      "temperature": true,
+      "release_date": "2026-06-13",
+      "last_updated": "2026-06-13",
+      "modalities": {
+        "input": [
+          "text"
+        ],
+        "output": [
+          "text"
+        ]
+      },
+      "open_weights": true,
+      "limit": {
+        "context": 1000000,
+        "output": 131072
+      },
+      "cost": {
+        "input": 0,
+        "output": 0,
+        "cache_read": 0,
+        "cache_write": 0
+      },
+      "display_name": "GLM-5.2",
+      "type": "chat"
+    },
+    {
+      "id": "glm-5.2-highspeed",
+      "name": "GLM-5.2 Highspeed",
+      "description": "Open flagship GLM for long-horizon coding agents and million-token context work",
+      "family": "glm",
+      "attachment": false,
+      "reasoning": {
+        "supported": true,
+        "default": true
+      },
+      "reasoning_options": [
+        {
+          "type": "effort",
+          "values": [
+            "high",
+            "max"
+          ]
+        }
+      ],
+      "tool_call": true,
+      "interleaved": {
+        "field": "reasoning_content"
+      },
+      "structured_output": true,
+      "temperature": true,
+      "release_date": "2026-06-13",
+      "last_updated": "2026-06-13",
+      "modalities": {
+        "input": [
+          "text"
+        ],
+        "output": [
+          "text"
+        ]
+      },
+      "open_weights": true,
+      "limit": {
+        "context": 1000000,
+        "output": 131072
+      },
+      "cost": {
+        "input": 0,
+        "output": 0,
+        "cache_read": 0,
+        "cache_write": 0
+      },
+      "display_name": "GLM-5.2 Highspeed",
+      "type": "chat"
     },
     {
       "id": "glm-5.3",
@@ -164,33 +239,23 @@
         "cache_write": 0
       },
       "display_name": "GLM-5.3",
-      "type": "chat",
-      "extra_capabilities": {
-        "reasoning": {
-          "supported": true,
-          "continuation": [
-            "thinking_blocks"
-          ],
-          "interleaved": true,
-          "summaries": true,
-          "visibility": "summary"
-        }
-      }
+      "type": "chat"
     },
     {
-      "id": "glm-5.2",
-      "name": "GLM-5.2",
-      "description": "Open flagship GLM for long-horizon coding agents and million-token context work",
+      "id": "glm-5.3-flash",
+      "name": "GLM-5.3-Flash",
+      "description": "Native multimodal GLM model for efficient coding and long-horizon agent tasks",
       "family": "glm",
-      "attachment": false,
+      "attachment": true,
       "reasoning": {
         "supported": true,
-        "default": true
+        "default": false
       },
       "reasoning_options": [
         {
           "type": "effort",
           "values": [
+            "low",
             "high",
             "max"
           ]
@@ -202,17 +267,20 @@
       },
       "structured_output": true,
       "temperature": true,
-      "release_date": "2026-06-13",
-      "last_updated": "2026-06-13",
+      "release_date": "2026-08-26",
+      "last_updated": "2026-08-26",
       "modalities": {
         "input": [
-          "text"
+          "text",
+          "image",
+          "video",
+          "pdf"
         ],
         "output": [
           "text"
         ]
       },
-      "open_weights": true,
+      "open_weights": false,
       "limit": {
         "context": 1000000,
         "output": 131072
@@ -223,34 +291,24 @@
         "cache_read": 0,
         "cache_write": 0
       },
-      "display_name": "GLM-5.2",
-      "type": "chat",
-      "extra_capabilities": {
-        "reasoning": {
-          "supported": true,
-          "continuation": [
-            "thinking_blocks"
-          ],
-          "interleaved": true,
-          "summaries": true,
-          "visibility": "summary"
-        }
-      }
+      "display_name": "GLM-5.3-Flash",
+      "type": "chat"
     },
     {
-      "id": "glm-5.2-highspeed",
-      "name": "GLM-5.2 Highspeed",
-      "description": "Open flagship GLM for long-horizon coding agents and million-token context work",
+      "id": "glm-5.3-highspeed",
+      "name": "GLM-5.3 Highspeed",
+      "description": "Flagship GLM model for long-horizon coding, agents, and complex project delivery",
       "family": "glm",
       "attachment": false,
       "reasoning": {
         "supported": true,
-        "default": true
+        "default": false
       },
       "reasoning_options": [
         {
           "type": "effort",
           "values": [
+            "low",
             "high",
             "max"
           ]
@@ -262,8 +320,8 @@
       },
       "structured_output": true,
       "temperature": true,
-      "release_date": "2026-06-13",
-      "last_updated": "2026-06-13",
+      "release_date": "2026-08-14",
+      "last_updated": "2026-08-14",
       "modalities": {
         "input": [
           "text"
@@ -272,7 +330,7 @@
           "text"
         ]
       },
-      "open_weights": true,
+      "open_weights": false,
       "limit": {
         "context": 1000000,
         "output": 131072
@@ -283,20 +341,14 @@
         "cache_read": 0,
         "cache_write": 0
       },
-      "display_name": "GLM-5.2 Highspeed",
-      "type": "chat",
-      "extra_capabilities": {
-        "reasoning": {
-          "supported": true,
-          "interleaved": true,
-          "summaries": true,
-          "visibility": "summary",
-          "continuation": [
-            "thinking_blocks"
-          ]
-        }
-      }
+      "display_name": "GLM-5.3 Highspeed",
+      "type": "chat"
     }
   ],
-  "defaultModelId": "glm-4.7"
+  "api": "https://api.z.ai/api/coding/paas/v4",
+  "doc": "https://docs.z.ai/devpack/overview",
+  "env": [
+    "ZHIPU_API_KEY"
+  ],
+  "npm": "@ai-sdk/openai-compatible"
 }
