@@ -69,6 +69,11 @@ SUPPORTED_NPM = {
     "@openrouter/ai-sdk-provider": "openai",
 }
 
+# models.dev also lists local runtimes. Their endpoint and model list are
+# facts about one machine, not about a service — an app offers them by
+# pointing a custom entry at localhost, so the catalog leaves them out.
+LOCAL_RUNTIMES = {"lmstudio", "ollama"}
+
 DEFAULT_APIS = {
     "anthropic": "https://api.anthropic.com",
     "openai": "https://api.openai.com/v1",
@@ -240,6 +245,9 @@ def sync_one(local_id, upstream_id, path, existing=None):
     return True
 
 for upstream_id in sorted(upstream):
+    if upstream_id in LOCAL_RUNTIMES:
+        unsupported += 1
+        continue
     entry = upstream[upstream_id]
     toml = read_provider_toml(upstream_id)
     npm = entry.get("npm") or toml.get("npm")

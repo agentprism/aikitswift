@@ -4,18 +4,18 @@ Vendored provider definitions. Each file names a provider's base URL, its
 models, and the `adapter` identifying which wire protocol it speaks.
 
 - Upstream commit: `a4d0d13ea`
-- Providers: 186
-- Models: 6199
+- Providers: 185
+- Models: 6196
 - Updated from upstream: 186
 - Added from upstream: 0
 - Removed from previous catalog: 0
-- Unsupported upstream providers omitted: 21
+- Unsupported upstream providers omitted: 22
 
 ## Adapters in use
 
 | Adapter | Providers |
 |---|---|
-| `openai` | 173 |
+| `openai` | 172 |
 | `anthropic` | 10 |
 | `gemini` | 2 |
 | `openai-responses` | 1 |
