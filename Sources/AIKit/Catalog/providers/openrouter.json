@@ -2368,9 +2368,9 @@
         "output": 384000
       },
       "cost": {
-        "input": 0.08596,
-        "output": 0.17192,
-        "cache_read": 0.017192
+        "input": 0.08092,
+        "output": 0.16184,
+        "cache_read": 0.016184
       },
       "display_name": "DeepSeek V4 Flash",
       "type": "chat"
@@ -2418,9 +2418,9 @@
         "output": 943718
       },
       "cost": {
-        "input": 0.045,
-        "output": 0.09,
-        "cache_read": 0.009
+        "input": 0.065,
+        "output": 0.18,
+        "cache_read": 0.016
       },
       "display_name": "DeepSeek V4 Flash 0731",
       "type": "chat"
@@ -2520,9 +2520,9 @@
         "output": 384000
       },
       "cost": {
-        "input": 0.711312,
-        "output": 1.422624,
-        "cache_read": 0.059276
+        "input": 0.508428,
+        "output": 1.016856,
+        "cache_read": 0.042369
       },
       "display_name": "DeepSeek V4 Pro",
       "type": "chat"
@@ -4755,11 +4755,11 @@
       "open_weights": true,
       "limit": {
         "context": 1048576,
-        "output": 16384
+        "output": 115200
       },
       "cost": {
         "input": 0.2,
-        "output": 0.8
+        "output": 0.696
       },
       "display_name": "Llama 4 Maverick",
       "type": "chat"
@@ -11498,12 +11498,11 @@
       "open_weights": true,
       "limit": {
         "context": 262144,
-        "output": 235929
+        "output": 16384
       },
       "cost": {
-        "input": 0.1,
-        "output": 1.1,
-        "cache_read": 0.07
+        "input": 0.09,
+        "output": 1.1
       },
       "display_name": "Qwen3-Next 80B-A3B Instruct",
       "type": "chat"
@@ -13663,12 +13662,12 @@
       "open_weights": true,
       "limit": {
         "context": 1048576,
-        "output": 262144
+        "output": 471859
       },
       "cost": {
-        "input": 0.95,
+        "input": 1,
         "output": 4.05,
-        "cache_read": 0.16
+        "cache_read": 0.17
       },
       "display_name": "Inkling",
       "type": "chat"
@@ -14868,12 +14867,12 @@
       "open_weights": true,
       "limit": {
         "context": 204800,
-        "output": 182476
+        "output": 128000
       },
       "cost": {
-        "input": 1.26,
-        "output": 3.96,
-        "cache_read": 0.234
+        "input": 0.966,
+        "output": 3.036,
+        "cache_read": 0.1794
       },
       "display_name": "GLM-5.1",
       "type": "chat"
@@ -15356,12 +15355,12 @@
       "open_weights": false,
       "limit": {
         "context": 1310720,
-        "output": 131072
+        "output": 393216
       },
       "cost": {
         "input": 0.03,
-        "output": 0.1,
-        "cache_read": 0.007
+        "output": 0.14,
+        "cache_read": 0.01
       },
       "display_name": "DeepSeek V4 Flash Latest",
       "type": "chat"
@@ -15765,9 +15764,9 @@
         "output": 131072
       },
       "cost": {
-        "input": 1.25,
-        "output": 4.4,
-        "cache_read": 0.26
+        "input": 1.1875,
+        "output": 4.18,
+        "cache_read": 0.247
       },
       "display_name": "GLM Latest",
       "type": "chat"
