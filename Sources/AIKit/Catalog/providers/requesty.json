@@ -2895,7 +2895,7 @@
           "text"
         ]
       },
-      "open_weights": false,
+      "open_weights": true,
       "limit": {
         "context": 1000000,
         "output": 128000
@@ -2963,11 +2963,11 @@
       "type": "chat"
     },
     {
-      "id": "glm-5.3-flash@eu",
-      "name": "GLM-5.3-Flash (EU)",
-      "description": "Native multimodal GLM model for efficient coding and long-horizon agent tasks",
+      "id": "glm-5.3@eu",
+      "name": "GLM-5.3 (EU)",
+      "description": "Flagship GLM model for long-horizon coding, agents, and complex project delivery",
       "family": "glm",
-      "attachment": true,
+      "attachment": false,
       "reasoning": {
         "supported": true,
         "default": false
@@ -2990,55 +2990,6 @@
       "tool_call": true,
       "structured_output": true,
       "temperature": true,
-      "release_date": "2026-08-26",
-      "last_updated": "2026-08-26",
-      "modalities": {
-        "input": [
-          "text",
-          "image",
-          "video",
-          "pdf"
-        ],
-        "output": [
-          "text"
-        ]
-      },
-      "open_weights": false,
-      "limit": {
-        "context": 1000000,
-        "output": 262144
-      },
-      "cost": {
-        "input": 0.2,
-        "output": 0.5,
-        "cache_read": 0.07
-      },
-      "display_name": "GLM-5.3-Flash (EU)",
-      "type": "chat"
-    },
-    {
-      "id": "glm-5.3@eu",
-      "name": "GLM-5.3 (EU)",
-      "description": "Flagship GLM model for long-horizon coding, agents, and complex project delivery",
-      "family": "glm",
-      "attachment": false,
-      "reasoning": {
-        "supported": true,
-        "default": false
-      },
-      "reasoning_options": [
-        {
-          "type": "effort",
-          "values": [
-            "low",
-            "high",
-            "max"
-          ]
-        }
-      ],
-      "tool_call": true,
-      "structured_output": true,
-      "temperature": true,
       "release_date": "2026-08-14",
       "last_updated": "2026-08-14",
       "modalities": {
@@ -3049,7 +3000,7 @@
           "text"
         ]
       },
-      "open_weights": false,
+      "open_weights": true,
       "limit": {
         "context": 1048576,
         "output": 1048576
@@ -3371,57 +3322,6 @@
         "cache_read": 0.1375
       },
       "display_name": "GPT-5.1 (EU)",
-      "type": "chat"
-    },
-    {
-      "id": "gpt-5.3-chat",
-      "name": "gpt-5.3-chat",
-      "description": "GPT-5.3 Chat is an update to ChatGPT's most-used model that makes everyday conversations smoother, more useful, and more directly helpful. It delivers more accurate answers with better contextualization and significantly reduces unnecessary refusals, caveats, and overly cautious phrasing that can interrupt conversational flow.",
-      "family": "gpt",
-      "attachment": true,
-      "reasoning": {
-        "supported": true,
-        "default": false
-      },
-      "reasoning_options": [
-        {
-          "type": "effort",
-          "values": [
-            "none",
-            "low",
-            "medium",
-            "high",
-            "max"
-          ]
-        },
-        {
-          "type": "budget_tokens"
-        }
-      ],
-      "tool_call": true,
-      "structured_output": true,
-      "release_date": "2026-03-18",
-      "last_updated": "2026-03-18",
-      "modalities": {
-        "input": [
-          "text",
-          "image"
-        ],
-        "output": [
-          "text"
-        ]
-      },
-      "open_weights": false,
-      "limit": {
-        "context": 128000,
-        "output": 16384
-      },
-      "cost": {
-        "input": 1.75,
-        "output": 14,
-        "cache_read": 0.175
-      },
-      "display_name": "gpt-5.3-chat",
       "type": "chat"
     },
     {

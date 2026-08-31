@@ -1339,11 +1339,11 @@
       "open_weights": true,
       "limit": {
         "context": 262144,
-        "output": 235929
+        "output": 80000
       },
       "cost": {
-        "input": 0.22,
-        "output": 0.85,
+        "input": 0.25,
+        "output": 0.8,
         "cache_read": 0.06
       },
       "display_name": "Trinity Large Thinking",
@@ -2272,12 +2272,12 @@
       "open_weights": true,
       "limit": {
         "context": 163840,
-        "output": 147456
+        "output": 65536
       },
       "cost": {
-        "input": 0.26,
-        "output": 0.38,
-        "cache_read": 0.13
+        "input": 0.269,
+        "output": 0.4,
+        "cache_read": 0.1345
       },
       "display_name": "DeepSeek V3.2",
       "type": "chat"
@@ -2368,9 +2368,9 @@
         "output": 384000
       },
       "cost": {
-        "input": 0.08092,
-        "output": 0.16184,
-        "cache_read": 0.016184
+        "input": 0.0784,
+        "output": 0.1568,
+        "cache_read": 0.01568
       },
       "display_name": "DeepSeek V4 Flash",
       "type": "chat"
@@ -2520,9 +2520,9 @@
         "output": 384000
       },
       "cost": {
-        "input": 0.508428,
-        "output": 1.016856,
-        "cache_read": 0.042369
+        "input": 0.417252,
+        "output": 0.834504,
+        "cache_read": 0.034771
       },
       "display_name": "DeepSeek V4 Pro",
       "type": "chat"
@@ -4755,11 +4755,11 @@
       "open_weights": true,
       "limit": {
         "context": 1048576,
-        "output": 115200
+        "output": 16384
       },
       "cost": {
         "input": 0.2,
-        "output": 0.696
+        "output": 0.8
       },
       "display_name": "Llama 4 Maverick",
       "type": "chat"
@@ -5567,9 +5567,9 @@
         "output": 209715
       },
       "cost": {
-        "input": 0.44,
-        "output": 2.2,
-        "cache_read": 0.044
+        "input": 0.4,
+        "output": 2,
+        "cache_read": 0.04
       },
       "display_name": "Devstral 2",
       "type": "chat"
@@ -7573,12 +7573,12 @@
       "open_weights": false,
       "limit": {
         "context": 1047576,
-        "output": 942818
+        "output": 32768
       },
       "cost": {
         "input": 0.1,
         "output": 0.4,
-        "cache_read": 0.03
+        "cache_read": 0.025
       },
       "display_name": "GPT-4.1 nano",
       "type": "chat"
@@ -13418,9 +13418,9 @@
         "output": 128000
       },
       "cost": {
-        "input": 0.132,
-        "output": 0.528,
-        "cache_read": 0.033
+        "input": 0.0825,
+        "output": 0.33,
+        "cache_read": 0.020625
       },
       "display_name": "Hy3",
       "type": "chat"
@@ -15008,7 +15008,7 @@
           "text"
         ]
       },
-      "open_weights": false,
+      "open_weights": true,
       "limit": {
         "context": 1310720,
         "output": 131072
@@ -15359,8 +15359,8 @@
       },
       "cost": {
         "input": 0.03,
-        "output": 0.14,
-        "cache_read": 0.01
+        "output": 0.16,
+        "cache_read": 0.013
       },
       "display_name": "DeepSeek V4 Flash Latest",
       "type": "chat"

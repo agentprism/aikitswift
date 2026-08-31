@@ -1277,7 +1277,7 @@
       "open_weights": true,
       "limit": {
         "context": 262144,
-        "output": 235929
+        "output": 80000
       },
       "cost": {
         "input": 0.22,
@@ -2196,7 +2196,7 @@
       "open_weights": true,
       "limit": {
         "context": 163840,
-        "output": 147456
+        "output": 65536
       },
       "cost": {
         "input": 0.269,
@@ -4769,8 +4769,8 @@
       },
       "open_weights": false,
       "limit": {
-        "context": 128000,
-        "output": 115200
+        "context": 1048576,
+        "output": 16384
       },
       "cost": {
         "input": 0.2,
@@ -5616,9 +5616,9 @@
         "output": 209715
       },
       "cost": {
-        "input": 0.44,
-        "output": 2.2,
-        "cache_read": 0.044
+        "input": 0.4,
+        "output": 2,
+        "cache_read": 0.04
       },
       "display_name": "Devstral 2",
       "type": "chat"
@@ -5990,9 +5990,8 @@
         "output": 16384
       },
       "cost": {
-        "input": 0.165,
-        "output": 0.165,
-        "cache_read": 0.0165
+        "input": 0.019,
+        "output": 0.03
       },
       "display_name": "Mistral Nemo",
       "type": "chat"
@@ -6178,9 +6177,8 @@
         "output": 16384
       },
       "cost": {
-        "input": 0.11,
-        "output": 0.33,
-        "cache_read": 0.011
+        "input": 0.075,
+        "output": 0.2
       },
       "display_name": "Mistral: Mistral Small 3.2 24B",
       "type": "chat"
@@ -7635,7 +7633,7 @@
       "open_weights": false,
       "limit": {
         "context": 1047576,
-        "output": 942818
+        "output": 32768
       },
       "cost": {
         "input": 0.1,
@@ -13598,9 +13596,9 @@
         "output": 128000
       },
       "cost": {
-        "input": 0.14,
-        "output": 0.58,
-        "cache_read": 0.035
+        "input": 0.0825,
+        "output": 0.33,
+        "cache_read": 0.020625
       },
       "display_name": "Hy3",
       "type": "chat"
@@ -15165,7 +15163,7 @@
           "text"
         ]
       },
-      "open_weights": false,
+      "open_weights": true,
       "limit": {
         "context": 1048576,
         "output": 131072
@@ -15518,8 +15516,8 @@
       },
       "cost": {
         "input": 0.03,
-        "output": 0.14,
-        "cache_read": 0.01
+        "output": 0.16,
+        "cache_read": 0.013
       },
       "display_name": "DeepSeek V4 Flash Latest",
       "type": "chat"
