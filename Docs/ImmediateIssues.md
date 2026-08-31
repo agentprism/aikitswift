@@ -12,37 +12,7 @@ The provider-neutral facade and conversation semantics will use pi-ai as the ref
 
 ## Immediate priorities
 
-### 1. Complete the provider-neutral facade
-
-Provider switching must operate through AIKit's normalized architecture rather than through separate public provider clients.
-
-The facade needs to:
-
-- Select a model by provider and model identity.
-- Route requests through the provider's declared wire protocol.
-- Expose one normalized streaming and complete-response API.
-- Keep provider wire types out of the provider-neutral public API.
-- Record the provider, API, and model identity that produced assistant history.
-- Preserve provider-specific state without making it part of the common vocabulary.
-
-### 2. Add pi-ai-style conversation transformation
-
-Before a prompt reaches a wire encoder, transform its history for the destination provider, API, model, and capabilities.
-
-The transformer should follow pi-ai's behavior where Swift's strongly typed representation permits it:
-
-- Retain opaque provider state only for an exact provider/API/model match.
-- Convert reasoning to readable text when opaque state cannot be replayed safely.
-- Remove provider metadata that does not belong to the destination.
-- Normalize or remap tool-call identifiers for the destination protocol.
-- Close orphaned tool calls with a synthetic result containing exactly `No result provided`.
-- Remove aborted or failed assistant turns that must not be replayed.
-- Downgrade unsupported user images to `(image omitted: model does not support images)`.
-- Downgrade unsupported tool-result images to `(tool image omitted: model does not support images)`.
-
-This belongs in the shared request path so every wire implementation receives already-valid destination history.
-
-### 3. Correct OpenAI Responses history and event handling
+### 1. Correct OpenAI Responses history and event handling
 
 The current Responses implementation handles ordinary text and tools but loses state needed for exact multi-turn behavior.
 
@@ -60,7 +30,20 @@ Immediate corrections include:
 
 Unknown valid events should continue to pass through without being discarded.
 
-### 4. Finish OpenAI Codex as an AIKit provider
+### 2. Correct Anthropic opaque-history replay
+
+Anthropic streaming currently captures redacted-thinking data, but request encoding does not reconstruct a `redacted_thinking` block from that state.
+
+The Anthropic path needs to:
+
+- Replay signed-thinking blocks in their original wire shape.
+- Replay redacted-thinking blocks in their original wire shape.
+- Preserve required thinking signatures byte-for-byte.
+- Group and order tool results according to Anthropic Messages requirements.
+
+This priority makes the Anthropic wire representation lossless. The shared conversation transformer added later will decide whether opaque state is safe to replay for a particular destination identity.
+
+### 3. Finish `WireProtocol.openAICodex`
 
 `WireProtocol.openAICodex` currently shares the ordinary OpenAI Responses endpoint, request encoding, event mapping, and generic bearer authentication. It must become a complete implementation within AIKit's existing provider/wire/client/auth structure.
 
@@ -78,16 +61,35 @@ The implementation needs:
 
 Shared Responses behavior should be factored into reusable helpers where the protocols genuinely match. Codex-specific behavior should remain explicit rather than being hidden behind ordinary Responses assumptions.
 
-### 5. Correct Anthropic opaque-history replay
+### 4. Complete the provider-neutral facade
 
-Anthropic streaming currently captures redacted-thinking data, but request encoding does not reconstruct a `redacted_thinking` block from that state.
+Provider switching must operate through AIKit's normalized architecture rather than through separate public provider clients.
 
-The Anthropic path needs to:
+The facade needs to:
 
-- Replay signed thinking only when destination identity permits it.
-- Replay redacted-thinking blocks in their original wire shape.
-- Preserve required thinking signatures byte-for-byte.
-- Group and order tool results according to Anthropic Messages requirements after shared history transformation.
+- Select a model by provider and model identity.
+- Route requests through the provider's declared wire protocol.
+- Expose one normalized streaming and complete-response API.
+- Keep provider wire types out of the provider-neutral public API.
+- Record the provider, API, and model identity that produced assistant history.
+- Preserve provider-specific state without making it part of the common vocabulary.
+
+### 5. Add pi-ai-style conversation transformation
+
+The transformer depends on the facade's destination model identity and shared request path. Once those exist, transform history before it reaches a wire encoder for the selected provider, API, model, and capabilities.
+
+The transformer should follow pi-ai's behavior where Swift's strongly typed representation permits it:
+
+- Retain opaque provider state only for an exact provider/API/model match.
+- Convert reasoning to readable text when opaque state cannot be replayed safely.
+- Remove provider metadata that does not belong to the destination.
+- Normalize or remap tool-call identifiers for the destination protocol.
+- Close orphaned tool calls with a synthetic result containing exactly `No result provided`.
+- Remove aborted or failed assistant turns that must not be replayed.
+- Downgrade unsupported user images to `(image omitted: model does not support images)`.
+- Downgrade unsupported tool-result images to `(tool image omitted: model does not support images)`.
+
+This belongs in the shared request path so every wire implementation receives already-valid destination history.
 
 ## Validation for these changes
 
