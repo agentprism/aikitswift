@@ -4,7 +4,7 @@
   "adapter": "openai",
   "models": [
     {
-      "id": "auto",
+      "id": "trustedrouter/auto",
       "name": "Auto",
       "description": "TrustedRouter automatic routing alias that chooses a healthy supported model endpoint for the request.",
       "attachment": true,
@@ -47,7 +47,7 @@
       "type": "chat"
     },
     {
-      "id": "cheap",
+      "id": "trustedrouter/cheap",
       "name": "Cheap",
       "description": "TrustedRouter low-cost routing alias that prefers inexpensive healthy model endpoints.",
       "attachment": true,
@@ -90,7 +90,7 @@
       "type": "chat"
     },
     {
-      "id": "e2e",
+      "id": "trustedrouter/e2e",
       "name": "End-to-End Encrypted",
       "description": "TrustedRouter privacy routing alias for end-to-end encrypted provider routes where available.",
       "attachment": true,
@@ -133,7 +133,7 @@
       "type": "chat"
     },
     {
-      "id": "fast",
+      "id": "trustedrouter/fast",
       "name": "Fast",
       "description": "TrustedRouter speed routing alias that prefers low-latency healthy model endpoints.",
       "attachment": true,
@@ -176,7 +176,7 @@
       "type": "chat"
     },
     {
-      "id": "synth",
+      "id": "trustedrouter/synth",
       "name": "Synth",
       "description": "TrustedRouter synthesis orchestration alias that combines multiple model responses into one answer.",
       "attachment": true,
@@ -219,7 +219,7 @@
       "type": "chat"
     },
     {
-      "id": "synth-code",
+      "id": "trustedrouter/synth-code",
       "name": "Synth Code",
       "description": "TrustedRouter code synthesis orchestration alias that combines multiple model responses into one answer.",
       "attachment": true,
@@ -262,7 +262,7 @@
       "type": "chat"
     },
     {
-      "id": "zdr",
+      "id": "trustedrouter/zdr",
       "name": "Zero Data Retention",
       "description": "TrustedRouter privacy routing alias that prefers zero data retention model endpoints.",
       "attachment": true,

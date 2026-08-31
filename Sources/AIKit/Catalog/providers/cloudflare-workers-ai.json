@@ -1065,7 +1065,7 @@
           "text"
         ]
       },
-      "open_weights": false,
+      "open_weights": true,
       "limit": {
         "context": 1310720,
         "output": 1310720
@@ -1106,7 +1106,7 @@
       "open_weights": true,
       "limit": {
         "context": 1310720,
-        "output": 1310720
+        "output": 1048576
       },
       "cost": {
         "input": 0.15,
