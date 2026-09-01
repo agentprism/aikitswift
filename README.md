@@ -78,6 +78,11 @@ assistant messages are excluded from replay. `ConversationTransformer` exposes
 the same deterministic value operation for callers that need to inspect a
 prepared history without sending it.
 
+A runnable [ChatGPT → Anthropic handoff example](Examples/ChatGPTHandoff/README.md)
+logs into ChatGPT Codex, streams its first turn, then changes the destination and
+continues the same `Prompt` with Claude. It is the smallest complete example of
+OAuth-backed provider initialization and cross-provider continuation.
+
 Multi-turn — including the tool loop — is append, not reconstruct:
 
 ```swift
