@@ -160,6 +160,26 @@ struct AIFacadeTests {
         #expect(betaBody["alpha_only"] == nil)
     }
 
+    @Test("streaming preserves provider-specific API-key headers")
+    func streamingUsesProviderSpecificAPIKeyHeaders() async throws {
+        FacadeStubProtocol.serve { _ in
+            .sse(Self.anthropicStream(text: "authenticated", model: "beta-actual"))
+        }
+
+        let facade = facade(providers: [beta])
+        let destination = try facade.destination(providerId: "beta", modelId: "shared-model")
+        let response = try await facade.stream(AIRequest(
+            destination: destination,
+            prompt: [.user("hi")]
+        )).collect()
+
+        #expect(response.text == "authenticated")
+        let request = try #require(FacadeStubProtocol.requests.first)
+        #expect(request.value(forHTTPHeaderField: "x-api-key") == "beta-key")
+        #expect(request.value(forHTTPHeaderField: "anthropic-version") == "2023-06-01")
+        #expect(request.value(forHTTPHeaderField: "authorization") == nil)
+    }
+
     @Test("one preparation boundary resolves immutable identity and capabilities")
     func preparesDestinationAndCapabilitiesOnce() throws {
         let client = AIClient(
@@ -397,6 +417,24 @@ struct AIFacadeTests {
         data: {"model":"\(model)","choices":[],"usage":{"prompt_tokens":2,"completion_tokens":2,"total_tokens":4}}
 
         data: [DONE]
+
+
+        """
+    }
+
+    private static func anthropicStream(text: String, model: String) -> String {
+        """
+        data: {"type":"message_start","message":{"id":"msg_stream","type":"message","role":"assistant","model":"\(model)","content":[],"stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":2,"output_tokens":1}}}
+
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}
+
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"\(text)"}}
+
+        data: {"type":"content_block_stop","index":0}
+
+        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null},"usage":{"output_tokens":2}}
+
+        data: {"type":"message_stop"}
 
 
         """

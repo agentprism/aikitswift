@@ -170,7 +170,12 @@ public struct AIClient: Sendable {
         let session = self.session
         let usesManagedCodexCredential = wire == .openAICodex
             && configuration.oauthCredentialProvider != nil
-        let initialCredential = usesManagedCodexCredential ? nil : configuredOAuthCredential
+        // The explicit credential argument is a Codex request-time override.
+        // Other wires must inspect the original authorization case so API keys
+        // retain provider-specific headers instead of becoming bearer tokens.
+        let initialCredential = wire == .openAICodex && !usesManagedCodexCredential
+            ? configuredOAuthCredential
+            : nil
         // Preserve the existing synchronous validation contract for every
         // ordinary provider (and static Codex credentials). Only managed Codex
         // auth requires request construction to wait on async credential I/O.
