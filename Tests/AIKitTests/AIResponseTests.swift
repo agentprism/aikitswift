@@ -153,8 +153,8 @@ struct AIResponseTests {
     }
 }
 
-/// `generate()` sends a genuinely non-streaming request; these pin the ways
-/// its wire shape must differ from the streaming one.
+/// `generate()` sends a genuinely non-streaming request for providers with a
+/// supported unary transport; these pin how that wire shape differs.
 @Suite("Non-streaming requests")
 struct NonStreamingRequestTests {
 

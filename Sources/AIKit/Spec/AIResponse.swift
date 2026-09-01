@@ -12,7 +12,7 @@ import Foundation
 /// and a stream becomes one via `collect()`:
 ///
 /// ```swift
-/// let response = try await client.generate(options)          // non-streaming
+/// let response = try await client.generate(options)          // complete response
 /// let response = try await client.stream(options).collect()  // streaming
 /// response.text
 /// ```
@@ -215,15 +215,18 @@ public struct AIResponse: Sendable, Hashable {
     /// `output_item.done` payloads it did receive.
     private var openAIOutputItems: [JSONValue]? {
         for event in providerEvents.reversed()
-        where event.provider == "openai"
-            && ["response.completed", "response.incomplete", "response.failed"].contains(event.type) {
+        where ["openai", "openai-codex"].contains(event.provider)
+            && ["response.completed", "response.incomplete", "response.failed", "response.done"]
+                .contains(event.type) {
             if let output = event.payload["response"]?["output"]?.arrayValue {
                 return output
             }
         }
 
         let completedItems = providerEvents.compactMap { event -> JSONValue? in
-            guard event.provider == "openai", event.type == "response.output_item.done" else { return nil }
+            guard ["openai", "openai-codex"].contains(event.provider),
+                  event.type == "response.output_item.done"
+            else { return nil }
             return event.payload["item"]
         }
         return completedItems.isEmpty ? nil : completedItems

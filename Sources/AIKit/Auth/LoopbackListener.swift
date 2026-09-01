@@ -16,7 +16,7 @@ import Network
 /// port open long after the flow completed.
 public actor LoopbackRedirectListener {
 
-    public enum Failure: Error, CustomStringConvertible {
+    public enum Failure: Error, CustomStringConvertible, Sendable {
         case cannotBind(String)
         case timedOut
         case cancelled
@@ -34,8 +34,22 @@ public actor LoopbackRedirectListener {
 
     private let listener: NWListener
     private let path: String
+    private let requestedPort: UInt16?
     private var continuation: CheckedContinuation<URL, any Error>?
     private var finished = false
+    private var terminalFailure: Failure?
+    private var expectedState: String?
+
+    private static let maximumRequestLineBytes = 8192
+    private static let failureHTML =
+        "<!doctype html><meta charset=utf-8><title>Sign-in failed</title>"
+        + "<body style=\"font:16px system-ui;padding:3rem\">"
+        + "Sign-in could not be completed. Return to the app and try again."
+
+    private enum RedirectResult: Sendable {
+        case success(URL)
+        case failure(Failure)
+    }
 
     /// The page shown in the browser once the redirect is captured.
     public var successHTML =
@@ -49,6 +63,7 @@ public actor LoopbackRedirectListener {
     ///   - path: the redirect path, matched against the incoming request.
     public init(port: UInt16? = nil, path: String = "/callback") throws {
         self.path = path
+        self.requestedPort = port
 
         let parameters = NWParameters.tcp
         // Without this a listener lingering in TIME_WAIT blocks a retry on the
@@ -66,7 +81,8 @@ public actor LoopbackRedirectListener {
         }
     }
 
-    /// The port actually bound. Only meaningful once ``waitForRedirect(timeout:)``
+    /// The port actually bound. Only meaningful once
+    /// ``waitForRedirect(timeout:expectedState:)``
     /// has started the listener.
     public var boundPort: UInt16? {
         listener.port?.rawValue
@@ -75,6 +91,11 @@ public actor LoopbackRedirectListener {
     /// The redirect URI to send with the authorization request.
     public func redirectURI() -> String? {
         boundPort.map { "http://127.0.0.1:\($0)\(path)" }
+    }
+
+    /// Whether this listener was constructed for a registered fixed redirect.
+    public func matches(port: UInt16, path: String) -> Bool {
+        requestedPort == port && self.path == path
     }
 
     /// Waits until the port is actually bound.
@@ -87,6 +108,7 @@ public actor LoopbackRedirectListener {
         let deadline = Date().addingTimeInterval(timeout)
 
         while Date() < deadline {
+            if let terminalFailure { throw terminalFailure }
             if let port = listener.port?.rawValue, port != 0 { return port }
             try await Task.sleep(for: .milliseconds(10))
         }
@@ -95,34 +117,54 @@ public actor LoopbackRedirectListener {
 
     /// Starts listening and resumes when a redirect arrives.
     ///
-    /// - Parameter timeout: how long to wait. A user who wanders off mid-login
-    ///   should not leave a port bound indefinitely.
-    public func waitForRedirect(timeout: TimeInterval = 300) async throws -> URL {
+    /// - Parameters:
+    ///   - timeout: how long to wait. A user who wanders off mid-login should
+    ///     not leave a port bound indefinitely.
+    ///   - expectedState: when supplied, the redirect must carry exactly this
+    ///     OAuth state value before the listener sends its success page.
+    public func waitForRedirect(
+        timeout: TimeInterval = 300,
+        expectedState: String? = nil
+    ) async throws -> URL {
         // The timeout resumes the continuation rather than racing it in a task
         // group. A group would deadlock: `withCheckedThrowingContinuation` does
         // not observe cancellation, so cancelling the losing child leaves the
         // group waiting on a continuation nothing will ever resume.
-        let timeoutTask = Task { [weak self] in
-            do {
-                try await Task.sleep(for: .seconds(timeout))
-            } catch {
-                return  // cancelled because the redirect already arrived
+        try Task.checkCancellation()
+        self.expectedState = expectedState
+        return try await withTaskCancellationHandler {
+            let timeoutTask = Task { [weak self] in
+                do {
+                    try await Task.sleep(for: .seconds(timeout))
+                } catch {
+                    return  // cancelled because the redirect already arrived
+                }
+                await self?.fail(.timedOut)
             }
-            await self?.fail(.timedOut)
-        }
-        defer { timeoutTask.cancel() }
+            defer { timeoutTask.cancel() }
 
-        let url = try await listen()
-        stop()
-        return url
+            do {
+                let url = try await listen()
+                stop()
+                try Task.checkCancellation()
+                return url
+            } catch {
+                stop()
+                if Task.isCancelled { throw CancellationError() }
+                throw error
+            }
+        } onCancel: {
+            Task { await self.stop() }
+        }
     }
 
     /// Stops the listener. Safe to call more than once.
     public func stop() {
         listener.cancel()
+        terminalFailure = terminalFailure ?? .cancelled
+        finished = true
         if let continuation {
             self.continuation = nil
-            finished = true
             continuation.resume(throwing: Failure.cancelled)
         }
     }
@@ -131,6 +173,10 @@ public actor LoopbackRedirectListener {
 
     private func listen() async throws -> URL {
         try await withCheckedThrowingContinuation { continuation in
+            if let terminalFailure {
+                continuation.resume(throwing: terminalFailure)
+                return
+            }
             self.continuation = continuation
 
             listener.newConnectionHandler = { [weak self] connection in
@@ -147,51 +193,145 @@ public actor LoopbackRedirectListener {
         }
     }
 
-    private func receive(on connection: NWConnection) {
-        connection.receive(minimumIncompleteLength: 1, maximumLength: 8192) { [weak self] data, _, _, _ in
+    private func receive(on connection: NWConnection, requestLine: Data = Data()) {
+        connection.receive(minimumIncompleteLength: 1, maximumLength: 2048) {
+            [weak self] data, _, isComplete, error in
             guard let self else { return }
+            let transportFailed = error != nil
 
             Task {
-                guard let data, let request = String(data: data, encoding: .utf8) else {
-                    await self.fail(.malformedRequest)
-                    connection.cancel()
-                    return
-                }
-
-                let html = await self.successHTML
-                // Reply before resolving, so the browser shows the page even
-                // though the listener is about to stop.
-                let response = """
-                    HTTP/1.1 200 OK\r
-                    Content-Type: text/html; charset=utf-8\r
-                    Content-Length: \(html.utf8.count)\r
-                    Connection: close\r
-                    \r
-                    \(html)
-                    """
-                connection.send(content: Data(response.utf8), completion: .contentProcessed { _ in
-                    connection.cancel()
-                })
-
-                await self.handle(request: request)
+                await self.consume(
+                    data,
+                    on: connection,
+                    requestLine: requestLine,
+                    isComplete: isComplete,
+                    transportFailed: transportFailed
+                )
             }
         }
     }
 
-    private func handle(request: String) {
+    private func consume(
+        _ data: Data?,
+        on connection: NWConnection,
+        requestLine: Data,
+        isComplete: Bool,
+        transportFailed: Bool
+    ) {
+        var buffered = requestLine
+        if let data { buffered.append(data) }
+
+        if let newline = buffered.firstIndex(of: UInt8(ascii: "\n")) {
+            let line = buffered.prefix(through: newline)
+            guard line.count <= Self.maximumRequestLineBytes,
+                  let request = String(data: line, encoding: .utf8)
+            else {
+                respond(
+                    status: "400 Bad Request",
+                    html: Self.failureHTML,
+                    result: .failure(.malformedRequest),
+                    on: connection
+                )
+                return
+            }
+            handle(request: request, on: connection)
+            return
+        }
+
+        guard buffered.count <= Self.maximumRequestLineBytes,
+              !isComplete,
+              !transportFailed
+        else {
+            respond(
+                status: "400 Bad Request",
+                html: Self.failureHTML,
+                result: .failure(.malformedRequest),
+                on: connection
+            )
+            return
+        }
+
+        // TCP is a byte stream: even the request line can arrive in multiple
+        // receives. Keep reading until its LF delimiter rather than treating
+        // the first packet as the complete HTTP request.
+        receive(on: connection, requestLine: buffered)
+    }
+
+    private func handle(request: String, on connection: NWConnection) {
         guard let target = Self.requestTarget(request) else {
-            fail(.malformedRequest)
+            respond(
+                status: "400 Bad Request",
+                html: Self.failureHTML,
+                result: .failure(.malformedRequest),
+                on: connection
+            )
             return
         }
 
         // The request line carries only a path and query; a scheme and host are
         // needed to make it a URL the flow can read query items from.
         guard let url = URL(string: "http://127.0.0.1\(target)") else {
-            fail(.malformedRequest)
+            respond(
+                status: "400 Bad Request",
+                html: Self.failureHTML,
+                result: .failure(.malformedRequest),
+                on: connection
+            )
             return
         }
+        guard url.path == path else {
+            respond(
+                status: "404 Not Found",
+                html: Self.failureHTML,
+                result: .failure(.malformedRequest),
+                on: connection
+            )
+            return
+        }
+        if let expectedState {
+            let states = URLComponents(url: url, resolvingAgainstBaseURL: false)?
+                .queryItems?.filter { $0.name == "state" } ?? []
+            guard states.count == 1, states[0].value == expectedState else {
+                respond(
+                    status: "400 Bad Request",
+                    html: Self.failureHTML,
+                    result: .failure(.malformedRequest),
+                    on: connection
+                )
+                return
+            }
+        }
 
-        succeed(url)
+        respond(status: "200 OK", html: successHTML, result: .success(url), on: connection)
+    }
+
+    private func respond(
+        status: String,
+        html: String,
+        result: RedirectResult,
+        on connection: NWConnection
+    ) {
+        let response = """
+            HTTP/1.1 \(status)\r
+            Content-Type: text/html; charset=utf-8\r
+            Content-Length: \(html.utf8.count)\r
+            Cache-Control: no-store\r
+            Connection: close\r
+            \r
+            \(html)
+            """
+        connection.send(content: Data(response.utf8), completion: .contentProcessed { [weak self] _ in
+            connection.cancel()
+            guard let self else { return }
+            Task { await self.complete(result) }
+        })
+    }
+
+    private func complete(_ result: RedirectResult) {
+        switch result {
+        case .success(let url): succeed(url)
+        case .failure(let error): fail(error)
+        }
     }
 
     /// Extracts the target from an HTTP request line: `GET /callback?… HTTP/1.1`.
@@ -213,9 +353,11 @@ public actor LoopbackRedirectListener {
     }
 
     private func fail(_ error: Failure) {
-        guard !finished, let continuation else { return }
-        self.continuation = nil
+        guard !finished else { return }
+        terminalFailure = error
         finished = true
+        guard let continuation else { return }
+        self.continuation = nil
         continuation.resume(throwing: error)
     }
 }
@@ -233,8 +375,10 @@ extension OAuthFlow {
         _ configuration: OAuthConfiguration,
         listener: LoopbackRedirectListener,
         timeout: TimeInterval = 300,
+        registeredRedirectURI: String? = nil,
         open: @Sendable (URL) -> Void
     ) async throws -> (code: String, pkce: PKCE) {
+        try Task.checkCancellation()
         let pkce = PKCE()
         // Unguessable, and checked on the way back: without it a redirect from
         // an unrelated flow would be accepted as this one's.
@@ -242,21 +386,40 @@ extension OAuthFlow {
 
         // The listener must be bound before the URL is built, because the
         // ephemeral port is part of the redirect URI.
-        let listening = Task { try await listener.waitForRedirect(timeout: timeout) }
-        try await listener.waitUntilBound()
-
-        var resolved = configuration
-        if let uri = await listener.redirectURI() {
-            resolved.redirectURI = uri
+        let listening = Task {
+            try await listener.waitForRedirect(timeout: timeout, expectedState: state)
         }
+        return try await withTaskCancellationHandler {
+            do {
+                try await listener.waitUntilBound()
 
-        open(authorizationURL(resolved, pkce: pkce, state: state))
+                var resolved = configuration
+                if let registeredRedirectURI {
+                    resolved.redirectURI = registeredRedirectURI
+                } else if let uri = await listener.redirectURI() {
+                    resolved.redirectURI = uri
+                }
 
-        let redirect = try await listening.value
-        guard let code = code(fromRedirect: redirect, expectedState: state) else {
-            throw LoopbackRedirectListener.Failure.malformedRequest
+                try Task.checkCancellation()
+                open(authorizationURL(resolved, pkce: pkce, state: state))
+
+                let redirect = try await listening.value
+                try Task.checkCancellation()
+                guard let code = code(fromRedirect: redirect, expectedState: state) else {
+                    throw LoopbackRedirectListener.Failure.malformedRequest
+                }
+
+                return (code, pkce)
+            } catch {
+                listening.cancel()
+                await listener.stop()
+                _ = await listening.result
+                if Task.isCancelled { throw CancellationError() }
+                throw error
+            }
+        } onCancel: {
+            listening.cancel()
+            Task { await listener.stop() }
         }
-
-        return (code, pkce)
     }
 }

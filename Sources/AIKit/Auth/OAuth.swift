@@ -84,17 +84,24 @@ public struct OAuthCredential: Sendable, Hashable, Codable {
     public var refreshToken: String?
     public var expiresAt: Date?
     public var scopes: [String]
+    /// Provider account identity carried alongside the token when the wire
+    /// protocol needs more than bearer authorization. ChatGPT Codex is the
+    /// current example: its backend requires `chatgpt-account-id` on every
+    /// request, and refreshed access tokens may select a different account.
+    public var accountId: String?
 
     public init(
         accessToken: String,
         refreshToken: String? = nil,
         expiresAt: Date? = nil,
-        scopes: [String] = []
+        scopes: [String] = [],
+        accountId: String? = nil
     ) {
         self.accessToken = accessToken
         self.refreshToken = refreshToken
         self.expiresAt = expiresAt
         self.scopes = scopes
+        self.accountId = accountId
     }
 
     /// Whether the token should be refreshed before the next request.
@@ -109,7 +116,9 @@ public struct OAuthCredential: Sendable, Hashable, Codable {
 
     /// Builds a credential from a token endpoint's JSON response.
     public init?(tokenResponse: JSONValue, now: Date = Date()) {
-        guard let accessToken = tokenResponse["access_token"]?.stringValue else { return nil }
+        guard let accessToken = tokenResponse["access_token"]?.stringValue,
+              !accessToken.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        else { return nil }
 
         self.accessToken = accessToken
         self.refreshToken = tokenResponse["refresh_token"]?.stringValue
@@ -118,6 +127,7 @@ public struct OAuthCredential: Sendable, Hashable, Codable {
             .map { now.addingTimeInterval($0) }
         self.scopes = tokenResponse["scope"]?.stringValue?
             .split(separator: " ").map(String.init) ?? []
+        self.accountId = nil
     }
 }
 

@@ -89,7 +89,7 @@ public enum OpenAIResponsesRequest {
 
     // MARK: - Input items
 
-    private static func encodeInput(_ prompt: Prompt) -> [JSONValue] {
+    static func encodeInput(_ prompt: Prompt) -> [JSONValue] {
         var items: [JSONValue] = []
         var outputTypeByCallId: [String: String] = [:]
 
@@ -211,27 +211,30 @@ public enum OpenAIResponsesRequest {
         return .object(["type": "input_image", "image_url": .string(url)])
     }
 
-    private static func encodeTools(_ tools: [ToolDefinition]) -> [JSONValue] {
+    static func encodeTools(
+        _ tools: [ToolDefinition],
+        defaultStrict: JSONValue? = nil
+    ) -> [JSONValue] {
         var encoded: [JSONValue] = []
         var namespaceIndices: [String: Int] = [:]
 
         for tool in tools {
             guard let namespace = tool.namespace else {
-                encoded.append(encodeFunction(tool))
+                encoded.append(encodeFunction(tool, defaultStrict: defaultStrict))
                 continue
             }
 
             if let index = namespaceIndices[namespace.name] {
                 var group = encoded[index].objectValue ?? [:]
                 var functions = group["tools"]?.arrayValue ?? []
-                functions.append(encodeFunction(tool))
+                functions.append(encodeFunction(tool, defaultStrict: defaultStrict))
                 group["tools"] = .array(functions)
                 encoded[index] = .object(group)
             } else {
                 var group: [String: JSONValue] = [
                     "type": "namespace",
                     "name": .string(namespace.name),
-                    "tools": .array([encodeFunction(tool)]),
+                    "tools": .array([encodeFunction(tool, defaultStrict: defaultStrict)]),
                 ]
                 group["description"] = .string(namespace.description)
                 namespaceIndices[namespace.name] = encoded.count
@@ -242,7 +245,10 @@ public enum OpenAIResponsesRequest {
         return encoded
     }
 
-    private static func encodeFunction(_ tool: ToolDefinition) -> JSONValue {
+    private static func encodeFunction(
+        _ tool: ToolDefinition,
+        defaultStrict: JSONValue?
+    ) -> JSONValue {
         // Flat, unlike Completions where the definition nests under `function`.
         var encoded: [String: JSONValue] = [
             "type": "function",
@@ -254,6 +260,8 @@ public enum OpenAIResponsesRequest {
         }
         if tool.strict {
             encoded["strict"] = .bool(true)
+        } else if let defaultStrict {
+            encoded["strict"] = defaultStrict
         }
         return .object(encoded)
     }
@@ -275,7 +283,7 @@ public enum OpenAIResponsesRequest {
         })
     }
 
-    private static func encodeToolChoice(_ choice: ToolChoice) -> JSONValue {
+    static func encodeToolChoice(_ choice: ToolChoice) -> JSONValue {
         switch choice {
         case .auto: .string("auto")
         case .none: .string("none")

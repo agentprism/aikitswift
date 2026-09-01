@@ -25,7 +25,8 @@ public enum NonStreamingResponse {
         switch wire {
         case .anthropicMessages: anthropic(body)
         case .openAICompletions: openAICompletions(body)
-        case .openAIResponses, .openAICodex: openAIResponses(body)
+        case .openAIResponses: openAIResponses(body)
+        case .openAICodex: openAIResponses(body, codexTerminalAlias: true)
         // Gemini's non-streaming body already has the shape of a stream chunk,
         // so it needs no rewriting at all.
         case .googleGenerativeAI: [body]
@@ -171,7 +172,10 @@ public enum NonStreamingResponse {
 
     // MARK: - OpenAI Responses
 
-    private static func openAIResponses(_ body: JSONValue) -> [JSONValue] {
+    private static func openAIResponses(
+        _ body: JSONValue,
+        codexTerminalAlias: Bool = false
+    ) -> [JSONValue] {
         var chunks: [JSONValue] = [.object(["type": "response.created", "response": body])]
 
         for (outputIndex, item) in (body["output"]?.arrayValue ?? []).enumerated() {
@@ -254,13 +258,29 @@ public enum NonStreamingResponse {
             ]))
         }
 
-        let terminal = switch body["status"]?.stringValue {
-        case "incomplete": "response.incomplete"
-        case "failed": "response.failed"
-        default: "response.completed"
+        // A complete Codex response is terminal data, not proof that the
+        // backend emitted an actual `response.failed` stream event. Replay it
+        // through the Codex alias so all six Codex statuses retain their
+        // original meaning and only a real failure event becomes an error.
+        let terminal = if codexTerminalAlias {
+            "response.done"
+        } else {
+            switch body["status"]?.stringValue {
+            case "incomplete": "response.incomplete"
+            case "failed": "response.failed"
+            default: "response.completed"
+            }
         }
         chunks.append(.object(["type": .string(terminal), "response": body]))
 
-        return chunks
+        // The official Responses streaming union requires a sequence number
+        // on every event. Synthetic events must obey the same contract or the
+        // shared mapper would correctly reject non-streaming responses after
+        // they are replayed through it.
+        return chunks.enumerated().map { index, chunk in
+            guard var object = chunk.objectValue else { return chunk }
+            object["sequence_number"] = .number(Double(index))
+            return .object(object)
+        }
     }
 }

@@ -53,6 +53,11 @@ struct CatalogTests {
         #expect(ProviderCatalog.provider("anthropic")?.wireProtocol == .anthropicMessages)
         #expect(ProviderCatalog.provider("deepseek")?.wireProtocol == .openAICompletions)
         #expect(ProviderCatalog.provider("google")?.wireProtocol == .googleGenerativeAI)
+        #expect(ProviderCatalog.provider("openai-codex")?.wireProtocol == .openAICodex)
+        #expect(
+            ProviderCatalog.provider("openai-codex")?.api
+                == "https://chatgpt.com/backend-api"
+        )
         #expect(
             ProviderCatalog.provider("google")?.api
                 == "https://generativelanguage.googleapis.com"

@@ -24,9 +24,15 @@ extension AIClient {
         guard let wire = provider.wireProtocol else {
             throw AIClientError(kind: .unsupportedProtocol(provider.adapter ?? "none"))
         }
+        guard wire != .openAICodex else {
+            // The ChatGPT backend is not an OpenAI-compatible `/v1/models`
+            // service. Its supported models come from AIKit's catalog until a
+            // Codex-specific live catalog contract is implemented and tested.
+            throw AIClientError(kind: .unsupportedModelListing(wire.rawValue))
+        }
 
         let base = try resolveBaseURL()
-        var request = URLRequest(url: Self.modelsEndpoint(wire: wire, base: base))
+        var request = URLRequest(url: try Self.modelsEndpoint(wire: wire, base: base))
         request.httpMethod = "GET"
         request.setValue("application/json", forHTTPHeaderField: "accept")
 
@@ -78,7 +84,7 @@ extension AIClient {
 
     // MARK: - Endpoints
 
-    static func modelsEndpoint(wire: WireProtocol, base: URL) -> URL {
+    static func modelsEndpoint(wire: WireProtocol, base: URL) throws -> URL {
         func path(_ versioned: String, _ bare: String) -> String {
             base.path.hasSuffix("/\(versioned)") ? bare : "\(versioned)/\(bare)"
         }
@@ -86,8 +92,10 @@ extension AIClient {
         switch wire {
         case .anthropicMessages:
             return base.appending(path: path("v1", "models"))
-        case .openAICompletions, .openAIResponses, .openAICodex:
+        case .openAICompletions, .openAIResponses:
             return base.appending(path: path("v1", "models"))
+        case .openAICodex:
+            throw AIClientError(kind: .unsupportedModelListing(wire.rawValue))
         case .googleGenerativeAI:
             return base.appending(path: path("v1beta", "models"))
         }
@@ -120,7 +128,7 @@ extension AIClient {
                 )
             }
 
-        case .anthropicMessages, .openAICompletions, .openAIResponses, .openAICodex:
+        case .anthropicMessages, .openAICompletions, .openAIResponses:
             // `data: [{ id, ... }]` — Anthropic adds `display_name`, and the
             // OpenAI-compatible crowd carries nothing beyond the id, which is
             // exactly why the catalog is consulted afterwards.
@@ -129,6 +137,11 @@ extension AIClient {
                 guard let id = entry["id"]?.stringValue else { return nil }
                 return ModelInfo(id: id, name: entry["display_name"]?.stringValue)
             }
+
+        case .openAICodex:
+            // Unreachable through `models()`: Codex live listing is explicitly
+            // disabled above and must not inherit an ordinary Responses shape.
+            return []
         }
     }
 }

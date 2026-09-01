@@ -15,6 +15,11 @@ public struct AIClientError: Error, Sendable, CustomStringConvertible {
         case missingBaseURL(String)
         /// The provider returned a non-2xx status.
         case http(status: Int, body: String)
+        /// Codex requires both bearer authorization and ChatGPT account identity.
+        case missingCodexCredential
+        case missingCodexAccountId
+        /// ChatGPT Codex has no supported live model-list endpoint in AIKit.
+        case unsupportedModelListing(String)
     }
 
     public var kind: Kind
@@ -29,6 +34,12 @@ public struct AIClientError: Error, Sendable, CustomStringConvertible {
             "Provider '\(id)' has no base URL; supply one in the configuration."
         case .http(let status, let body):
             "Provider returned HTTP \(status): \(body)"
+        case .missingCodexCredential:
+            "OpenAI Codex requires an OAuth bearer credential."
+        case .missingCodexAccountId:
+            "OpenAI Codex requires ChatGPT account identity in its OAuth access token."
+        case .unsupportedModelListing(let protocolName):
+            "Live model listing is not supported for '\(protocolName)'; use the bundled catalog."
         }
     }
 }
@@ -65,22 +76,34 @@ public struct AIClient: Sendable {
         public var baseURL: URL?
         /// Merged into every request, and applied last so they can override.
         public var extraHeaders: [String: String]
+        /// Optional persisted/refreshing OAuth source. Codex uses this before a
+        /// request and once more after a 401; static `.oauth` authorization
+        /// remains available for providers that do not need managed refresh.
+        public var oauthCredentialProvider: (any OAuthCredentialProviding)?
 
         public init(
             authorization: Authorization = .none,
             baseURL: URL? = nil,
-            extraHeaders: [String: String] = [:]
+            extraHeaders: [String: String] = [:],
+            oauthCredentialProvider: (any OAuthCredentialProviding)? = nil
         ) {
             self.authorization = authorization
             self.baseURL = baseURL
             self.extraHeaders = extraHeaders
+            self.oauthCredentialProvider = oauthCredentialProvider
         }
 
-        public init(apiKey: String?, baseURL: URL? = nil, extraHeaders: [String: String] = [:]) {
+        public init(
+            apiKey: String?,
+            baseURL: URL? = nil,
+            extraHeaders: [String: String] = [:],
+            oauthCredentialProvider: (any OAuthCredentialProviding)? = nil
+        ) {
             self.init(
                 authorization: apiKey.map(Authorization.apiKey) ?? .none,
                 baseURL: baseURL,
-                extraHeaders: extraHeaders
+                extraHeaders: extraHeaders,
+                oauthCredentialProvider: oauthCredentialProvider
             )
         }
     }
@@ -117,9 +140,19 @@ public struct AIClient: Sendable {
 
         let model = provider.model(options.model)
         let encoded = encode(options, wire: wire, model: model)
-        let request = try makeRequest(wire: wire, options: options, body: encoded.body)
-
         let session = self.session
+        let usesManagedCodexCredential = wire == .openAICodex
+            && configuration.oauthCredentialProvider != nil
+        let initialCredential = usesManagedCodexCredential ? nil : configuredOAuthCredential
+        // Preserve the existing synchronous validation contract for every
+        // ordinary provider (and static Codex credentials). Only managed Codex
+        // auth requires request construction to wait on async credential I/O.
+        let initialRequest = usesManagedCodexCredential ? nil : try makeRequest(
+            wire: wire,
+            options: options,
+            body: encoded.body,
+            oauthCredential: initialCredential
+        )
 
         return AsyncThrowingStream { continuation in
             let task = Task {
@@ -129,35 +162,76 @@ public struct AIClient: Sendable {
                     // contract stays: exactly one, first, carrying warnings.
                     continuation.yield(.streamStart(warnings: encoded.warnings))
 
-                    let (bytes, response) = try await session.bytes(for: request)
-
-                    if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
-                        // The body holds the provider's error detail, which is
-                        // the only useful thing about a failed request — so it
-                        // is collected verbatim. Reading it as lines would drop
-                        // the line breaks and run the words together.
-                        var detail: [UInt8] = []
-                        for try await byte in bytes { detail.append(byte) }
-                        throw AIClientError(kind: .http(
-                            status: http.statusCode,
-                            body: String(decoding: detail, as: UTF8.self)
-                        ))
+                    var credential = initialCredential
+                    var preparedRequest = initialRequest
+                    if usesManagedCodexCredential {
+                        credential = try await credentialForRequest(wire: wire)
                     }
+                    var replayedAuthentication = false
 
-                    var mapper = wire.makeMapper()
+                    requestLoop: while true {
+                        try Task.checkCancellation()
+                        let request: URLRequest
+                        if let ready = preparedRequest {
+                            request = ready
+                        } else {
+                            request = try makeRequest(
+                                wire: wire,
+                                options: options,
+                                body: encoded.body,
+                                oauthCredential: credential
+                            )
+                        }
+                        preparedRequest = nil
+                        let (bytes, response) = try await session.bytes(for: request)
 
-                    for try await event in sseEvents(from: bytes) {
-                        for part in mapper.map(rawJSON: event.data) {
+                        if let http = response as? HTTPURLResponse,
+                           !(200..<300).contains(http.statusCode) {
+                            // The body holds the provider's error detail, which
+                            // is collected verbatim before a retry or error.
+                            var detail: [UInt8] = []
+                            for try await byte in bytes { detail.append(byte) }
+
+                            if wire == .openAICodex,
+                               http.statusCode == 401,
+                               !replayedAuthentication,
+                               let rejected = credential?.accessToken,
+                               let provider = configuration.oauthCredentialProvider {
+                                replayedAuthentication = true
+                                credential = try await provider.credential(afterRejecting: rejected)
+                                continue requestLoop
+                            }
+
+                            throw AIClientError(kind: .http(
+                                status: http.statusCode,
+                                body: String(decoding: detail, as: UTF8.self)
+                            ))
+                        }
+
+                        var mapper = wire.makeMapper()
+
+                        let eventSource = SSEEventSource(bytes: bytes)
+                        for try await event in eventSource.events {
+                            for part in mapper.map(rawJSON: event.data) {
+                                if case .streamStart = part { continue }
+                                continuation.yield(part)
+                            }
+                            if mapper.shouldTerminateTransport {
+                                // Codex's response terminal can precede HTTP EOF.
+                                // Stop the parser task so its URLSession byte
+                                // iteration cancels the underlying request.
+                                eventSource.cancel()
+                                break
+                            }
+                        }
+
+                        // Several protocols carry final usage nowhere else, so
+                        // this runs even when the connection ended without a sentinel.
+                        for part in mapper.finish() {
                             if case .streamStart = part { continue }
                             continuation.yield(part)
                         }
-                    }
-
-                    // Several protocols carry final usage nowhere else, so this
-                    // runs even when the connection ended without a sentinel.
-                    for part in mapper.finish() {
-                        if case .streamStart = part { continue }
-                        continuation.yield(part)
+                        break requestLoop
                     }
 
                     continuation.finish()
@@ -169,7 +243,7 @@ public struct AIClient: Sendable {
         }
     }
 
-    // MARK: - Non-streaming
+    // MARK: - Complete responses
 
     /// Sends a request and returns the complete response.
     ///
@@ -181,13 +255,17 @@ public struct AIClient: Sendable {
     /// response.text
     /// ```
     ///
-    /// This is a genuinely non-streaming request on the wire, not a drained
-    /// stream. The body is decoded through the same mappers as a stream would
-    /// be, so the two paths cannot drift. To continue the conversation, append
+    /// Providers with a supported complete-response transport receive a
+    /// genuinely non-streaming request. OpenAI Codex is the exception: its
+    /// supported transport is SSE, so this method collects ``stream(_:)`` into
+    /// the same complete ``AIResponse``. To continue the conversation, append
     /// ``AIResponse/assistantMessage`` to the prompt.
     public func generate(_ options: CallOptions) async throws -> AIResponse {
         guard let wire = provider.wireProtocol else {
             throw AIClientError(kind: .unsupportedProtocol(provider.adapter ?? "none"))
+        }
+        if wire == .openAICodex {
+            return try await stream(options).collect()
         }
 
         let model = provider.model(options.model)
@@ -195,7 +273,6 @@ public struct AIClient: Sendable {
         let request = try makeRequest(
             wire: wire, options: options, body: encoded.body, streaming: false
         )
-
         let (data, response) = try await session.data(for: request)
 
         if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
@@ -243,8 +320,12 @@ public struct AIClient: Sendable {
                 reasoningToggle: provider.reasoningToggle,
                 streaming: streaming
             )
-        case .openAIResponses, .openAICodex:
+        case .openAIResponses:
             OpenAIResponsesRequest.encode(options, model: model, streaming: streaming)
+        case .openAICodex:
+            // Codex has no supported non-streaming transport. Its encoder is
+            // intentionally independent of this shared dispatch flag.
+            OpenAICodexResponsesRequest.encode(options, model: model)
         case .googleGenerativeAI:
             // Gemini switches between streaming and not in the URL, not the body.
             GoogleGenerativeAIRequest.encode(options, model: model)
@@ -255,9 +336,10 @@ public struct AIClient: Sendable {
         wire: WireProtocol,
         options: CallOptions,
         body: JSONValue,
-        streaming: Bool = true
+        streaming: Bool = true,
+        oauthCredential: OAuthCredential? = nil
     ) throws -> URLRequest {
-        let base = try resolveBaseURL()
+        let base = try resolveBaseURL(wire: wire)
         var request = URLRequest(
             url: endpoint(wire: wire, base: base, model: options.model, streaming: streaming)
         )
@@ -269,8 +351,27 @@ public struct AIClient: Sendable {
             forHTTPHeaderField: "accept"
         )
 
-        for (name, value) in authHeaders(wire: wire) {
+        for (name, value) in authHeaders(wire: wire, oauthCredential: oauthCredential) {
             request.setValue(value, forHTTPHeaderField: name)
+        }
+        if wire == .openAICodex {
+            let credential = oauthCredential ?? configuredOAuthCredential
+            guard let credential,
+                  !credential.accessToken.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            else { throw AIClientError(kind: .missingCodexCredential) }
+            let accountId = OpenAICodexOAuthClient.accountId(from: credential.accessToken)
+                ?? credential.accountId
+            guard let accountId, !accountId.isEmpty else {
+                throw AIClientError(kind: .missingCodexAccountId)
+            }
+            request.setValue(accountId, forHTTPHeaderField: "chatgpt-account-id")
+            request.setValue("responses=experimental", forHTTPHeaderField: "OpenAI-Beta")
+            request.setValue("aikit-swift", forHTTPHeaderField: "originator")
+            request.setValue("AIKitSwift", forHTTPHeaderField: "User-Agent")
+            if let sessionId = body["prompt_cache_key"]?.stringValue, !sessionId.isEmpty {
+                request.setValue(sessionId, forHTTPHeaderField: "session-id")
+                request.setValue(sessionId, forHTTPHeaderField: "x-client-request-id")
+            }
         }
         for (name, value) in configuration.extraHeaders {
             request.setValue(value, forHTTPHeaderField: name)
@@ -291,6 +392,15 @@ public struct AIClient: Sendable {
         return url
     }
 
+    private func resolveBaseURL(wire: WireProtocol) throws -> URL {
+        if let baseURL = configuration.baseURL { return baseURL }
+        if let api = provider.api, let url = URL(string: api) { return url }
+        if wire == .openAICodex {
+            return URL(string: "https://chatgpt.com/backend-api")!
+        }
+        throw AIClientError(kind: .missingBaseURL(provider.id))
+    }
+
     func endpoint(wire: WireProtocol, base: URL, model: String, streaming: Bool = true) -> URL {
         // Catalog base URLs are inconsistent about including a version prefix,
         // so it is added only when absent.
@@ -303,8 +413,17 @@ public struct AIClient: Sendable {
             return base.appending(path: path("v1", "messages"))
         case .openAICompletions:
             return base.appending(path: path("v1", "chat/completions"))
-        case .openAIResponses, .openAICodex:
+        case .openAIResponses:
             return base.appending(path: path("v1", "responses"))
+        case .openAICodex:
+            let normalized = base.absoluteString.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+            if normalized.hasSuffix("/codex/responses") {
+                return URL(string: normalized) ?? base
+            }
+            if normalized.hasSuffix("/codex") {
+                return URL(string: "\(normalized)/responses") ?? base
+            }
+            return URL(string: "\(normalized)/codex/responses") ?? base
         case .googleGenerativeAI:
             // Gemini switches methods rather than taking a `stream` flag, and
             // streaming needs an explicit opt-in to Server-Sent Events —
@@ -318,6 +437,16 @@ public struct AIClient: Sendable {
     }
 
     func authHeaders(wire: WireProtocol) -> [String: String] {
+        authHeaders(wire: wire, oauthCredential: nil)
+    }
+
+    private func authHeaders(
+        wire: WireProtocol,
+        oauthCredential: OAuthCredential?
+    ) -> [String: String] {
+        if let oauthCredential {
+            return ["authorization": "Bearer \(oauthCredential.accessToken)"]
+        }
         switch configuration.authorization {
         case .none:
             // Local runtimes and gateways often need none.
@@ -354,5 +483,20 @@ public struct AIClient: Sendable {
 
             return headers
         }
+    }
+
+    private var configuredOAuthCredential: OAuthCredential? {
+        switch configuration.authorization {
+        case .oauth(let credential): credential
+        case .apiKey(let token): OAuthCredential(accessToken: token)
+        case .none: nil
+        }
+    }
+
+    private func credentialForRequest(wire: WireProtocol) async throws -> OAuthCredential? {
+        if wire == .openAICodex, let provider = configuration.oauthCredentialProvider {
+            return try await provider.credential()
+        }
+        return configuredOAuthCredential
     }
 }

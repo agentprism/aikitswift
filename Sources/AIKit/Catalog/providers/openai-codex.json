@@ -1,0 +1,92 @@
+{
+  "id": "openai-codex",
+  "name": "OpenAI Codex",
+  "api": "https://chatgpt.com/backend-api",
+  "adapter": "openai-codex",
+  "models": [
+    {
+      "id": "gpt-5.3-codex-spark",
+      "name": "GPT-5.3 Codex Spark",
+      "attachment": false,
+      "reasoning": { "supported": true, "default": true },
+      "reasoning_options": [
+        { "type": "effort", "values": ["low", "medium", "high", "xhigh"] }
+      ],
+      "tool_call": true,
+      "modalities": { "input": ["text"], "output": ["text"] },
+      "limit": { "context": 128000, "output": 128000 }
+    },
+    {
+      "id": "gpt-5.4",
+      "name": "GPT-5.4",
+      "attachment": true,
+      "reasoning": { "supported": true, "default": true },
+      "reasoning_options": [
+        { "type": "effort", "values": ["low", "medium", "high", "xhigh"] }
+      ],
+      "tool_call": true,
+      "modalities": { "input": ["text", "image"], "output": ["text"] },
+      "limit": { "context": 272000, "output": 128000 }
+    },
+    {
+      "id": "gpt-5.4-mini",
+      "name": "GPT-5.4 mini",
+      "attachment": true,
+      "reasoning": { "supported": true, "default": true },
+      "reasoning_options": [
+        { "type": "effort", "values": ["low", "medium", "high", "xhigh"] }
+      ],
+      "tool_call": true,
+      "modalities": { "input": ["text", "image"], "output": ["text"] },
+      "limit": { "context": 272000, "output": 128000 }
+    },
+    {
+      "id": "gpt-5.5",
+      "name": "GPT-5.5",
+      "attachment": true,
+      "reasoning": { "supported": true, "default": true },
+      "reasoning_options": [
+        { "type": "effort", "values": ["low", "medium", "high", "xhigh"] }
+      ],
+      "tool_call": true,
+      "modalities": { "input": ["text", "image"], "output": ["text"] },
+      "limit": { "context": 272000, "output": 128000 }
+    },
+    {
+      "id": "gpt-5.6-luna",
+      "name": "GPT-5.6 Luna",
+      "attachment": true,
+      "reasoning": { "supported": true, "default": true },
+      "reasoning_options": [
+        { "type": "effort", "values": ["low", "medium", "high", "xhigh", "max"] }
+      ],
+      "tool_call": true,
+      "modalities": { "input": ["text", "image"], "output": ["text"] },
+      "limit": { "context": 272000, "output": 128000 }
+    },
+    {
+      "id": "gpt-5.6-sol",
+      "name": "GPT-5.6 Sol",
+      "attachment": true,
+      "reasoning": { "supported": true, "default": true },
+      "reasoning_options": [
+        { "type": "effort", "values": ["low", "medium", "high", "xhigh", "max"] }
+      ],
+      "tool_call": true,
+      "modalities": { "input": ["text", "image"], "output": ["text"] },
+      "limit": { "context": 272000, "output": 128000 }
+    },
+    {
+      "id": "gpt-5.6-terra",
+      "name": "GPT-5.6 Terra",
+      "attachment": true,
+      "reasoning": { "supported": true, "default": true },
+      "reasoning_options": [
+        { "type": "effort", "values": ["low", "medium", "high", "xhigh", "max"] }
+      ],
+      "tool_call": true,
+      "modalities": { "input": ["text", "image"], "output": ["text"] },
+      "limit": { "context": 272000, "output": 128000 }
+    }
+  ]
+}

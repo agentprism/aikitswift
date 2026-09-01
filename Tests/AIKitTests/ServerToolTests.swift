@@ -208,6 +208,7 @@ struct OtherProtocolServerToolTests {
         var wire = OpenAIResponsesWire()
         _ = wire.map(chunk: [
             "type": "response.output_item.added",
+            "sequence_number": 0,
             "output_index": 0,
             "item": [
                 "type": "shell_call", "id": "sh_1", "call_id": "call_sh",
@@ -216,6 +217,7 @@ struct OtherProtocolServerToolTests {
         ])
         _ = wire.map(chunk: [
             "type": "response.shell_call_command.delta",
+            "sequence_number": 1,
             "item_id": "sh_1",
             "output_index": 0,
             "command_index": 0,
@@ -223,6 +225,7 @@ struct OtherProtocolServerToolTests {
         ])
         let parts = wire.map(chunk: [
             "type": "response.output_item.done",
+            "sequence_number": 2,
             "output_index": 0,
             "item": [
                 "type": "shell_call", "id": "sh_1", "call_id": "call_sh",
@@ -242,16 +245,19 @@ struct OtherProtocolServerToolTests {
         var wire = OpenAIResponsesWire()
         _ = wire.map(chunk: [
             "type": "response.output_item.added",
+            "sequence_number": 0,
             "output_index": 0,
             "item": ["type": "future_tool_call", "id": "ft_1"],
         ])
         _ = wire.map(chunk: [
             "type": "response.future_tool_call_thing.delta",
+            "sequence_number": 1,
             "item_id": "ft_1",
             "delta": "{\"a\":1}",
         ])
         let parts = wire.map(chunk: [
             "type": "response.output_item.done",
+            "sequence_number": 2,
             "output_index": 0,
             "item": ["type": "future_tool_call", "id": "ft_1"],
         ])
@@ -266,6 +272,7 @@ struct OtherProtocolServerToolTests {
         var wire = OpenAIResponsesWire()
         _ = wire.map(chunk: [
             "type": "response.output_item.added",
+            "sequence_number": 0,
             "output_index": 0,
             "item": [
                 "type": "mcp_call", "id": "mcp_1", "call_id": "call_mcp",
@@ -274,6 +281,7 @@ struct OtherProtocolServerToolTests {
         ])
         let parts = wire.map(chunk: [
             "type": "response.output_item.done",
+            "sequence_number": 1,
             "output_index": 0,
             "item": [
                 "type": "mcp_call", "id": "mcp_1", "call_id": "call_mcp",

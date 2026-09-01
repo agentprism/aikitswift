@@ -106,18 +106,17 @@ public struct SSEParser: Sendable {
 
 // MARK: - Async bridge
 
-/// Wraps a byte stream — typically `URLSession.bytes(for:).0` — as a stream of
-/// parsed Server-Sent Events.
-///
-/// The lines are split here rather than by `AsyncSequence.lines`, which
-/// **discards empty lines**. In text that is invisible; in SSE the blank line
-/// *is* the frame delimiter, so every payload of a response merges into one
-/// event and the wire decoders then reject it as `The given data was not valid
-/// JSON` — a whole conversation lost to a line splitter being helpful.
-public func sseEvents<Bytes: AsyncSequence & Sendable>(
-    from bytes: Bytes
-) -> AsyncThrowingStream<SSEEvent, any Error> where Bytes.Element == UInt8 {
-    AsyncThrowingStream { continuation in
+/// A parsed SSE stream together with ownership of the task consuming its byte
+/// transport. Codex stops at its terminal response event, which can arrive
+/// before the server closes the HTTP body; retaining this handle lets the
+/// client cancel that transport immediately instead of waiting for EOF.
+struct SSEEventSource: Sendable {
+    let events: AsyncThrowingStream<SSEEvent, any Error>
+    private let task: Task<Void, Never>
+
+    init<Bytes: AsyncSequence & Sendable>(bytes: Bytes) where Bytes.Element == UInt8 {
+        let pair = AsyncThrowingStream<SSEEvent, any Error>.makeStream()
+        let continuation = pair.continuation
         let task = Task {
             var parser = SSEParser()
             var line: [UInt8] = []
@@ -163,5 +162,25 @@ public func sseEvents<Bytes: AsyncSequence & Sendable>(
             }
         }
         continuation.onTermination = { _ in task.cancel() }
+        self.events = pair.stream
+        self.task = task
     }
+
+    func cancel() {
+        task.cancel()
+    }
+}
+
+/// Wraps a byte stream — typically `URLSession.bytes(for:).0` — as a stream of
+/// parsed Server-Sent Events.
+///
+/// The lines are split here rather than by `AsyncSequence.lines`, which
+/// **discards empty lines**. In text that is invisible; in SSE the blank line
+/// *is* the frame delimiter, so every payload of a response merges into one
+/// event and the wire decoders then reject it as `The given data was not valid
+/// JSON` — a whole conversation lost to a line splitter being helpful.
+public func sseEvents<Bytes: AsyncSequence & Sendable>(
+    from bytes: Bytes
+) -> AsyncThrowingStream<SSEEvent, any Error> where Bytes.Element == UInt8 {
+    SSEEventSource(bytes: bytes).events
 }

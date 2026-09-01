@@ -1,4 +1,5 @@
 import Foundation
+import Network
 import Testing
 
 @testable import AIKit
@@ -6,7 +7,7 @@ import Testing
 /// The loopback listener is the one piece of this library that is genuinely
 /// tested end to end: it binds a real socket and a real HTTP request is made
 /// against it. No provider, no key, no network beyond localhost.
-@Suite("Loopback redirect listener")
+@Suite("Loopback redirect listener", .serialized)
 struct LoopbackListenerTests {
 
     @Test("parses the target out of a request line")
@@ -45,6 +46,65 @@ struct LoopbackListenerTests {
         let items = URLComponents(url: captured, resolvingAgainstBaseURL: false)?.queryItems ?? []
         #expect(items.first { $0.name == "code" }?.value == "abc123")
         #expect(items.first { $0.name == "state" }?.value == "xyz")
+    }
+
+    @Test("accepts a request line fragmented across TCP receives")
+    func acceptsFragmentedRequestLine() async throws {
+        let listener = try LoopbackRedirectListener()
+        let waiting = Task { try await listener.waitForRedirect(timeout: 10) }
+        let port = try await listener.waitUntilBound()
+        let networkPort = try #require(NWEndpoint.Port(rawValue: port))
+        let connection = NWConnection(host: .ipv4(.loopback), port: networkPort, using: .tcp)
+        connection.start(queue: .global())
+        defer { connection.cancel() }
+
+        try await send(Data("GET /call".utf8), over: connection)
+        // Force the listener's first receive to observe an incomplete request
+        // line rather than relying on the TCP stack to coalesce both writes.
+        try await Task.sleep(for: .milliseconds(100))
+        try await send(Data(
+            "back?code=fragmented&state=ok HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n".utf8
+        ), over: connection)
+
+        let captured = try await waiting.value
+        let items = URLComponents(url: captured, resolvingAgainstBaseURL: false)?.queryItems ?? []
+        #expect(items.first { $0.name == "code" }?.value == "fragmented")
+    }
+
+    @Test("rejects a wrong callback path before sending the success page")
+    func rejectsWrongPathBeforeSuccessResponse() async throws {
+        let listener = try LoopbackRedirectListener()
+        let waiting = Task {
+            try await listener.waitForRedirect(timeout: 10, expectedState: "expected")
+        }
+        let port = try await listener.waitUntilBound()
+        let url = URL(string: "http://127.0.0.1:\(port)/wrong?code=x&state=expected")!
+
+        let (data, response) = try await URLSession.shared.data(from: url)
+
+        #expect((response as? HTTPURLResponse)?.statusCode == 404)
+        #expect(String(decoding: data, as: UTF8.self).contains("Sign-in could not be completed"))
+        await #expect(throws: LoopbackRedirectListener.Failure.self) {
+            _ = try await waiting.value
+        }
+    }
+
+    @Test("rejects a wrong OAuth state before sending the success page")
+    func rejectsWrongStateBeforeSuccessResponse() async throws {
+        let listener = try LoopbackRedirectListener()
+        let waiting = Task {
+            try await listener.waitForRedirect(timeout: 10, expectedState: "expected")
+        }
+        let port = try await listener.waitUntilBound()
+        let url = URL(string: "http://127.0.0.1:\(port)/callback?code=x&state=wrong")!
+
+        let (data, response) = try await URLSession.shared.data(from: url)
+
+        #expect((response as? HTTPURLResponse)?.statusCode == 400)
+        #expect(String(decoding: data, as: UTF8.self).contains("Sign-in could not be completed"))
+        await #expect(throws: LoopbackRedirectListener.Failure.self) {
+            _ = try await waiting.value
+        }
     }
 
     @Test("binds only the loopback interface")
@@ -142,6 +202,81 @@ struct LoopbackListenerTests {
                     _ = try? await URLSession.shared.data(from: callback)
                 }
             }
+        }
+    }
+
+    @Test("cancelling authorization stops its listener and releases the port")
+    func authorizationCancellationCleansUpListener() async throws {
+        let listener = try LoopbackRedirectListener()
+        let configuration = OAuthConfiguration(
+            clientId: "client-1",
+            authorizationEndpoint: URL(string: "https://example.com/authorize")!,
+            tokenEndpoint: URL(string: "https://example.com/token")!,
+            redirectURI: "http://127.0.0.1:0/callback"
+        )
+        let authorization = Task {
+            try await OAuthFlow.authorize(
+                configuration,
+                listener: listener,
+                timeout: 30
+            ) { _ in }
+        }
+        let port = try await listener.waitUntilBound()
+
+        authorization.cancel()
+        do {
+            _ = try await authorization.value
+            Issue.record("Expected cancellation")
+        } catch {
+            #expect(error is CancellationError)
+        }
+
+        let replacement = try LoopbackRedirectListener(port: port)
+        let replacementWait = Task { try await replacement.waitForRedirect(timeout: 30) }
+        #expect(try await replacement.waitUntilBound() == port)
+        await replacement.stop()
+        _ = try? await replacementWait.value
+    }
+
+    @Test("an early listener failure resolves authorization and releases the port")
+    func earlyAuthorizationFailureCleansUpListener() async throws {
+        let listener = try LoopbackRedirectListener()
+        let initialWait = Task { try await listener.waitForRedirect(timeout: 30) }
+        let port = try await listener.waitUntilBound()
+        await listener.stop()
+        _ = try? await initialWait.value
+
+        let configuration = OAuthConfiguration(
+            clientId: "client-1",
+            authorizationEndpoint: URL(string: "https://example.com/authorize")!,
+            tokenEndpoint: URL(string: "https://example.com/token")!,
+            redirectURI: "http://127.0.0.1:0/callback"
+        )
+        await #expect(throws: LoopbackRedirectListener.Failure.self) {
+            _ = try await OAuthFlow.authorize(
+                configuration,
+                listener: listener,
+                timeout: 30
+            ) { _ in }
+        }
+
+        let replacement = try LoopbackRedirectListener(port: port)
+        let replacementWait = Task { try await replacement.waitForRedirect(timeout: 30) }
+        #expect(try await replacement.waitUntilBound() == port)
+        await replacement.stop()
+        _ = try? await replacementWait.value
+    }
+
+    private func send(_ data: Data, over connection: NWConnection) async throws {
+        try await withCheckedThrowingContinuation {
+            (continuation: CheckedContinuation<Void, any Error>) in
+            connection.send(content: data, completion: .contentProcessed { error in
+                if let error {
+                    continuation.resume(throwing: error)
+                } else {
+                    continuation.resume()
+                }
+            })
         }
     }
 }

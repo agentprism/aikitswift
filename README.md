@@ -33,15 +33,15 @@ Nothing else in that loop changes.
 When the events don't matter and only the outcome does, skip the loop:
 
 ```swift
-let response = try await client.generate(options)   // non-streaming on the wire
+let response = try await client.generate(options)   // complete response
 response.text          // the answer, assembled
 response.usage         // what it cost
 ```
 
-`generate` sends a genuinely non-streaming request and decodes the complete body
-through the same mappers a stream goes through, so the two paths cannot drift.
-A stream can be drained into the same aggregate with
-`try await client.stream(options).collect()`.
+`generate` uses a genuinely non-streaming request when the provider supports
+one. OpenAI Codex is the exception: its supported transport is SSE, which
+`generate` collects into the same complete response. A stream can be drained
+explicitly with `try await client.stream(options).collect()`.
 
 Multi-turn — including the tool loop — is append, not reconstruct:
 
@@ -260,7 +260,7 @@ all five protocols; the catalog covers 186 providers.
 | Google Generative AI | ✅ stream + request |
 | Provider catalog | ✅ 186 providers, 6199 models |
 | Thinking on / off / level | ✅ all protocols |
-| Live model listing (`GET /models`) | ✅ all protocols |
+| Live model listing (`GET /models`) | ✅ except OpenAI Codex (bundled catalog) |
 | Context attribution | ✅ |
 | Non-streaming responses (`generate()`) | ✅ all protocols |
 | Aggregated response + multi-turn replay (`AIResponse`) | ✅ |

@@ -82,7 +82,10 @@ public struct OpenAIResponsesWire: WireMapper {
     /// event that silently bypasses validation.
     private static let eventSchemas: [String: [FieldRule]] = {
         var schemas: [String: [FieldRule]] = [:]
-        let sequence = FieldRule("sequence_number", .integer, required: false)
+        // Every event in the official streaming union carries a required
+        // sequence number. Treating it as optional allowed truncated or
+        // hand-shaped known events to pass validation.
+        let sequence = FieldRule("sequence_number", .integer)
         let itemReference = [
             sequence,
             FieldRule("item_id", .string),
@@ -168,6 +171,7 @@ public struct OpenAIResponsesWire: WireMapper {
         ])
         register(["response.function_call_arguments.done"], itemReference + [
             FieldRule("arguments", .string),
+            FieldRule("name", .string),
         ])
         register(["response.apply_patch_call_operation_diff.delta"], itemReference + [
             FieldRule("delta", .string),
@@ -293,6 +297,40 @@ public struct OpenAIResponsesWire: WireMapper {
         }
 
         parts.append(contentsOf: mapChunk(chunk))
+        return parts
+    }
+
+    /// Maps a Codex terminal alias through the Responses state machine without
+    /// imposing the ordinary event-type/status equality rule. Codex uses
+    /// `response.done`, `response.completed`, and `response.incomplete` as
+    /// terminal aliases whose response status can be any member of its six
+    /// value status union. An actual `response.failed` event remains on the
+    /// ordinary path and is the only terminal event that emits a provider error.
+    mutating func mapTerminalAlias(
+        _ chunk: JSONValue,
+        allowedStatuses: Set<String>
+    ) -> [StreamPart] {
+        var parts: [StreamPart] = []
+        if !emittedStreamStart {
+            emittedStreamStart = true
+            parts.append(.streamStart(warnings: []))
+        }
+
+        let type = chunk["type"]?.stringValue ?? "response terminal"
+        let preserved = StreamPart.providerEvent(ProviderEvent(
+            provider: "openai", type: type, payload: chunk
+        ))
+        parts.append(preserved)
+
+        if let detail = Self.codexTerminalAliasValidationError(
+            chunk,
+            allowedStatuses: allowedStatuses
+        ) {
+            parts.append(Self.malformed(type, detail, chunk))
+            return parts
+        }
+
+        parts.append(contentsOf: responseTerminal(chunk, emitFailureError: false))
         return parts
     }
 
@@ -738,7 +776,10 @@ public struct OpenAIResponsesWire: WireMapper {
         return []
     }
 
-    private mutating func responseTerminal(_ chunk: JSONValue) -> [StreamPart] {
+    private mutating func responseTerminal(
+        _ chunk: JSONValue,
+        emitFailureError: Bool = true
+    ) -> [StreamPart] {
         guard let response = chunk["response"]?.objectValue.map(JSONValue.object) else {
             return [Self.malformed(
                 chunk["type"]?.stringValue ?? "response terminal",
@@ -764,7 +805,7 @@ public struct OpenAIResponsesWire: WireMapper {
             hasToolCalls: emittedClientToolCall || !toolCallOrder.isEmpty
         )
 
-        guard status == "failed" else { return [] }
+        guard emitFailureError, status == "failed" else { return [] }
         guard let error = response["error"], !error.isNull else {
             return [Self.malformed("response.failed", "missing response.error details", chunk)]
         }
@@ -824,6 +865,50 @@ public struct OpenAIResponsesWire: WireMapper {
             }
         }
 
+        return nil
+    }
+
+    private static func codexTerminalAliasValidationError(
+        _ chunk: JSONValue,
+        allowedStatuses: Set<String>
+    ) -> String? {
+        guard chunk["sequence_number"]?.intValue != nil else {
+            return chunk["sequence_number"] == nil
+                ? "missing integer field `sequence_number`"
+                : "field `sequence_number` must be integer"
+        }
+        guard let response = chunk["response"], response.objectValue != nil else {
+            return chunk["response"] == nil
+                ? "missing object field `response`"
+                : "field `response` must be object"
+        }
+        guard response["id"]?.stringValue != nil else {
+            return response["id"] == nil
+                ? "missing string field `response.id`"
+                : "field `response.id` must be string"
+        }
+        guard let status = response["status"]?.stringValue else {
+            return response["status"] == nil
+                ? "missing string field `response.status`"
+                : "field `response.status` must be string"
+        }
+        guard allowedStatuses.contains(status) else {
+            return "field `response.status` has unsupported Codex value `\(status)`"
+        }
+        guard let output = response["output"]?.arrayValue else {
+            return response["output"] == nil
+                ? "missing array field `response.output`"
+                : "field `response.output` must be array"
+        }
+        for (index, item) in output.enumerated() {
+            if let error = validateOutputItem(
+                item,
+                prefix: "response.output[\(index)]",
+                context: .terminal
+            ) {
+                return error
+            }
+        }
         return nil
     }
 
@@ -892,10 +977,18 @@ public struct OpenAIResponsesWire: WireMapper {
             for field in ["call_id", "name", "input"] {
                 if let error = require(item, field, .string, prefix: prefix) { return error }
             }
+            if let error = optional(item, "namespace", .string, prefix: prefix) { return error }
 
-        case "function_call_output", "custom_tool_call_output":
+        case "function_call_output":
+            // The provider's output-item schema permits call_id to be absent
+            // on retained output items even though callers normally include it
+            // when sending a tool result as input.
+            if let error = optional(item, "call_id", .string, prefix: prefix) { return error }
+            if let error = validateToolOutput(item["output"], prefix: "\(prefix).output") { return error }
+
+        case "custom_tool_call_output":
             if let error = require(item, "call_id", .string, prefix: prefix) { return error }
-            if let error = requireStringOrArray(item, "output", prefix: prefix) { return error }
+            if let error = validateToolOutput(item["output"], prefix: "\(prefix).output") { return error }
 
         case "reasoning":
             if let error = require(item, "summary", .array, prefix: prefix) { return error }
@@ -1077,6 +1170,47 @@ public struct OpenAIResponsesWire: WireMapper {
         return require(part, "text", .string, prefix: prefix)
     }
 
+    private static func validateToolOutput(_ output: JSONValue?, prefix: String) -> String? {
+        guard let output else { return "missing string or array field `\(prefix)`" }
+        if output.stringValue != nil { return nil }
+        guard let parts = output.arrayValue else {
+            return "field `\(prefix)` must be string or array"
+        }
+        for (index, part) in parts.enumerated() {
+            let partPrefix = "\(prefix)[\(index)]"
+            guard part.objectValue != nil else { return "field `\(partPrefix)` must be object" }
+            guard let type = part["type"]?.stringValue else {
+                return "missing string field `\(partPrefix).type`"
+            }
+            switch type {
+            case "input_text":
+                if let error = require(part, "text", .string, prefix: partPrefix) { return error }
+            case "input_image":
+                if let error = optionalNullable(part, "detail", .string, prefix: partPrefix) { return error }
+                if let error = optionalNullable(part, "image_url", .string, prefix: partPrefix) { return error }
+                if let error = optionalNullable(part, "file_id", .string, prefix: partPrefix) { return error }
+                guard part["image_url"]?.stringValue != nil || part["file_id"]?.stringValue != nil else {
+                    return "`\(partPrefix)` needs string image_url or file_id"
+                }
+            case "input_file":
+                if let error = optional(part, "detail", .string, prefix: partPrefix) { return error }
+                for field in ["file_data", "file_id", "file_url", "filename"] {
+                    if let error = optionalNullable(part, field, .string, prefix: partPrefix) { return error }
+                }
+                guard ["file_data", "file_id", "file_url"].contains(where: {
+                    part[$0]?.stringValue != nil
+                }) else {
+                    return "`\(partPrefix)` needs string file_data, file_id, or file_url"
+                }
+            default:
+                // Unknown future content discriminators remain valid, but the
+                // envelope is still recursively shape-checked above.
+                break
+            }
+        }
+        return nil
+    }
+
     private static func require(
         _ object: JSONValue,
         _ field: String,
@@ -1114,20 +1248,6 @@ public struct OpenAIResponsesWire: WireMapper {
         guard let value = object[field], !value.isNull else { return nil }
         guard kind.accepts(value) else {
             return "field `\(prefix).\(field)` must be \(kind.rawValue) or null"
-        }
-        return nil
-    }
-
-    private static func requireStringOrArray(
-        _ object: JSONValue,
-        _ field: String,
-        prefix: String
-    ) -> String? {
-        guard let value = object[field] else {
-            return "missing string or array field `\(prefix).\(field)`"
-        }
-        guard value.stringValue != nil || value.arrayValue != nil else {
-            return "field `\(prefix).\(field)` must be string or array"
         }
         return nil
     }
@@ -1281,8 +1401,10 @@ public struct OpenAIResponsesWire: WireMapper {
             unified = hasToolCalls ? .toolCalls : .stop
         case "incomplete":
             unified = incompleteReason == "max_output_tokens" ? .length : .contentFilter
-        case "failed":
+        case "failed", "cancelled":
             unified = .error
+        case "queued", "in_progress":
+            unified = .stop
         default:
             unified = .other
         }

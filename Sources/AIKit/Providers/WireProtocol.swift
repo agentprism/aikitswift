@@ -22,9 +22,8 @@ public enum WireProtocol: String, Sendable, Hashable, Codable, CaseIterable {
         switch self {
         case .anthropicMessages: .anthropic(AnthropicMessagesWire())
         case .openAICompletions: .openAICompletions(OpenAICompletionsWire())
-        // Codex differs from Responses in how a request is authenticated, not
-        // in how a response is shaped, so the same mapper serves both.
-        case .openAIResponses, .openAICodex: .openAIResponses(OpenAIResponsesWire())
+        case .openAIResponses: .openAIResponses(OpenAIResponsesWire())
+        case .openAICodex: .openAICodex(OpenAICodexResponsesWire())
         case .googleGenerativeAI: .google(GoogleGenerativeAIWire())
         }
     }
@@ -40,10 +39,20 @@ public enum AnyWireMapper: WireMapper {
     case anthropic(AnthropicMessagesWire)
     case openAICompletions(OpenAICompletionsWire)
     case openAIResponses(OpenAIResponsesWire)
+    case openAICodex(OpenAICodexResponsesWire)
     case google(GoogleGenerativeAIWire)
 
     /// Defaults to Chat Completions, the most widely spoken protocol.
     public init() { self = .openAICompletions(OpenAICompletionsWire()) }
+
+    /// Whether a protocol-specific terminal event requires the client to stop
+    /// reading and cancel an otherwise still-open transport.
+    var shouldTerminateTransport: Bool {
+        if case .openAICodex(let wire) = self {
+            return wire.shouldTerminateTransport
+        }
+        return false
+    }
 
     public mutating func map(chunk: JSONValue) -> [StreamPart] {
         switch self {
@@ -55,6 +64,9 @@ public enum AnyWireMapper: WireMapper {
             return wire.map(chunk: chunk)
         case .openAIResponses(var wire):
             defer { self = .openAIResponses(wire) }
+            return wire.map(chunk: chunk)
+        case .openAICodex(var wire):
+            defer { self = .openAICodex(wire) }
             return wire.map(chunk: chunk)
         case .google(var wire):
             defer { self = .google(wire) }
@@ -73,6 +85,9 @@ public enum AnyWireMapper: WireMapper {
         case .openAIResponses(var wire):
             defer { self = .openAIResponses(wire) }
             return wire.map(rawJSON: rawJSON)
+        case .openAICodex(var wire):
+            defer { self = .openAICodex(wire) }
+            return wire.map(rawJSON: rawJSON)
         case .google(var wire):
             defer { self = .google(wire) }
             return wire.map(rawJSON: rawJSON)
@@ -89,6 +104,9 @@ public enum AnyWireMapper: WireMapper {
             return wire.finish()
         case .openAIResponses(var wire):
             defer { self = .openAIResponses(wire) }
+            return wire.finish()
+        case .openAICodex(var wire):
+            defer { self = .openAICodex(wire) }
             return wire.finish()
         case .google(var wire):
             defer { self = .google(wire) }

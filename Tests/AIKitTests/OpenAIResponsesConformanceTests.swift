@@ -12,6 +12,17 @@ struct OpenAIResponsesConformanceTests {
         var expectedField: String
 
         var testDescription: String { name }
+
+        init(name: String, event: JSONValue, expectedField: String) {
+            self.name = name
+            if var object = event.objectValue, object["sequence_number"] == nil {
+                object["sequence_number"] = 0
+                self.event = .object(object)
+            } else {
+                self.event = event
+            }
+            self.expectedField = expectedField
+        }
     }
 
     struct OutputItemCase: Sendable, CustomTestStringConvertible {
@@ -518,6 +529,7 @@ struct OpenAIResponsesConformanceTests {
     func validatesKnownTerminalOutputItem(testCase: OutputItemCase) {
         let event: JSONValue = [
             "type": "response.completed",
+            "sequence_number": 0,
             "response": ["id": "resp_1", "status": "completed", "output": [testCase.item]],
         ]
         var wire = OpenAIResponsesWire()
@@ -533,6 +545,7 @@ struct OpenAIResponsesConformanceTests {
     func rejectsMalformedKnownTerminalOutputItem(testCase: OutputItemCase) {
         let event: JSONValue = [
             "type": "response.completed",
+            "sequence_number": 0,
             "response": ["id": "resp_1", "status": "completed", "output": [testCase.malformedItem]],
         ]
         var wire = OpenAIResponsesWire()
@@ -567,10 +580,25 @@ struct OpenAIResponsesConformanceTests {
                 }
                 return false
             }, "\(name): known event \(type) was not retained")
-            #expect(!parts.contains {
-                if case .error(let error) = $0 { return error.type == "malformed_event" }
-                return false
-            }, "\(name): valid recorded event \(type) was treated as malformed")
+            let malformed = parts.compactMap { part -> StreamError? in
+                if case .error(let error) = part, error.type == "malformed_event" { return error }
+                return nil
+            }
+            if chunk["sequence_number"] == nil {
+                // This one legacy capture predates sequence numbers entirely.
+                // Preserve it as evidence and assert the stricter validator's
+                // normalized error rather than rewriting recorded traffic.
+                #expect(malformed.first?.raw == chunk)
+                #expect(malformed.first?.message.contains("sequence_number") == true)
+            } else if type == "response.function_call_arguments.done", chunk["name"] == nil {
+                // Older provider captures predate the official required `name`
+                // field. Keep those source bytes exact and prove they now take
+                // the normalized malformed-event path with their payload intact.
+                #expect(malformed.first?.raw == chunk)
+                #expect(malformed.first?.message.contains("name") == true)
+            } else {
+                #expect(malformed.isEmpty, "\(name): valid recorded event \(type) was treated as malformed")
+            }
         }
     }
 
@@ -621,6 +649,7 @@ struct OpenAIResponsesConformanceTests {
 
         _ = wire.map(chunk: [
             "type": "response.output_item.added",
+            "sequence_number": 0,
             "output_index": 0,
             "item": [
                 "type": "function_call",
@@ -632,12 +661,14 @@ struct OpenAIResponsesConformanceTests {
         ])
         _ = wire.map(chunk: [
             "type": "response.function_call_arguments.delta",
+            "sequence_number": 1,
             "item_id": "item_1",
             "output_index": 0,
             "delta": "{\"city\":\"Paris\"}",
         ])
         let parts = wire.map(chunk: [
             "type": "response.output_item.done",
+            "sequence_number": 2,
             "output_index": 0,
             "item": [
                 "type": "function_call",
@@ -663,6 +694,7 @@ struct OpenAIResponsesConformanceTests {
         for index in 0..<2 {
             _ = wire.map(chunk: [
                 "type": "response.content_part.added",
+                "sequence_number": .number(Double(index)),
                 "item_id": "item_1",
                 "output_index": 0,
                 "content_index": .number(Double(index)),
@@ -672,6 +704,7 @@ struct OpenAIResponsesConformanceTests {
 
         let starts = wire.map(chunk: [
             "type": "response.content_part.done",
+            "sequence_number": 2,
             "item_id": "item_1",
             "output_index": 0,
             "content_index": 0,
@@ -758,9 +791,18 @@ struct OpenAIResponsesConformanceTests {
 
     @Test("custom tool calls stay pending and replay exact grammar input")
     func preservesCustomToolCallSemantics() throws {
-        let parts = try #require(
-            try Fixture.replay(OpenAIResponsesWire.self, Self.set, "openai-custom-tool.1").first
-        )
+        // The historical custom-tool capture predates `sequence_number`.
+        // Project a schema-current stream for this semantic round-trip test;
+        // the separate payload test above maps and retains the original bytes.
+        var wire = OpenAIResponsesWire()
+        var parts = try Fixture.chunks(Self.set, "openai-custom-tool.1")
+            .enumerated()
+            .flatMap { index, chunk -> [StreamPart] in
+                var event = chunk.objectValue ?? [:]
+                event["sequence_number"] = .number(Double(index))
+                return wire.map(chunk: .object(event))
+            }
+        parts.append(contentsOf: wire.finish())
         let response = AIResponse(parts: parts)
         let call = try #require(response.pendingToolCalls.first)
         let terminal = try #require(response.providerEvents.last {
@@ -824,6 +866,106 @@ struct OpenAIResponsesConformanceTests {
         let error = parts.compactMap { if case .error(let error) = $0 { return error } else { return nil } }.first
         #expect(error?.type == "malformed_event")
         #expect(error?.raw?["type"]?.stringValue == "response.output_text.delta")
+    }
+
+    @Test("official streaming events require sequence_number")
+    func requiresSequenceNumber() {
+        let event: JSONValue = [
+            "type": "response.in_progress",
+            "response": ["id": "resp_1", "status": "in_progress"],
+        ]
+        var wire = OpenAIResponsesWire()
+        let error = wire.map(chunk: event).compactMap {
+            if case .error(let error) = $0 { return error }
+            return nil
+        }.first
+
+        #expect(error?.type == "malformed_event")
+        #expect(error?.message.contains("sequence_number") == true)
+        #expect(error?.raw == event)
+    }
+
+    @Test("function argument completion requires name")
+    func requiresFunctionArgumentDoneName() {
+        let event: JSONValue = [
+            "type": "response.function_call_arguments.done",
+            "sequence_number": 0,
+            "item_id": "fc_1",
+            "output_index": 0,
+            "arguments": "{}",
+        ]
+        var wire = OpenAIResponsesWire()
+        let response = AIResponse(parts: wire.map(chunk: event))
+
+        #expect(response.providerEvents.last?.payload == event)
+        #expect(response.errors.first?.type == "malformed_event")
+        #expect(response.errors.first?.message.contains("name") == true)
+        #expect(response.errors.first?.raw == event)
+    }
+
+    @Test("custom tool namespace is validated when present")
+    func validatesCustomToolNamespace() {
+        let event: JSONValue = [
+            "type": "response.output_item.done",
+            "sequence_number": 0,
+            "output_index": 0,
+            "item": [
+                "type": "custom_tool_call", "call_id": "call_1", "name": "query",
+                "input": "SELECT 1", "namespace": 7,
+            ],
+        ]
+        var wire = OpenAIResponsesWire()
+        let error = wire.map(chunk: event).compactMap {
+            if case .error(let error) = $0 { return error }
+            return nil
+        }.first
+
+        #expect(error?.type == "malformed_event")
+        #expect(error?.message.contains("item.namespace") == true)
+        #expect(error?.raw == event)
+    }
+
+    @Test("structured function output content is recursively validated")
+    func validatesStructuredFunctionOutput() {
+        let event: JSONValue = [
+            "type": "response.completed",
+            "sequence_number": 0,
+            "response": [
+                "id": "resp_1", "status": "completed",
+                "output": [[
+                    "type": "function_call_output",
+                    "output": [["type": "input_text", "text": 7]],
+                ]],
+            ],
+        ]
+        var wire = OpenAIResponsesWire()
+        let error = wire.map(chunk: event).compactMap {
+            if case .error(let error) = $0 { return error }
+            return nil
+        }.first
+
+        #expect(error?.type == "malformed_event")
+        #expect(error?.message.contains("response.output[0].output[0].text") == true)
+        #expect(error?.raw == event)
+    }
+
+    @Test("function call output permits absent call_id")
+    func permitsAbsentFunctionOutputCallId() {
+        let event: JSONValue = [
+            "type": "response.completed",
+            "sequence_number": 0,
+            "response": [
+                "id": "resp_1", "status": "completed",
+                "output": [["type": "function_call_output", "output": "done"]],
+            ],
+        ]
+        var wire = OpenAIResponsesWire()
+        let parts = wire.map(chunk: event)
+
+        #expect(!parts.contains {
+            if case .error(let error) = $0 { return error.type == "malformed_event" }
+            return false
+        })
     }
 
     @Test(

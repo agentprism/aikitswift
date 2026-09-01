@@ -58,15 +58,21 @@ struct ModelListingTests {
 
     @Test("each protocol's models endpoint sits where that vendor put it")
     func resolvesEndpoints() throws {
-        func endpoint(_ wire: WireProtocol, _ base: String) -> String {
-            AIClient.modelsEndpoint(wire: wire, base: URL(string: base)!).absoluteString
+        func endpoint(_ wire: WireProtocol, _ base: String) throws -> String {
+            try AIClient.modelsEndpoint(wire: wire, base: URL(string: base)!).absoluteString
         }
 
-        #expect(endpoint(.openAICompletions, "http://localhost:11434/v1") == "http://localhost:11434/v1/models")
+        #expect(try endpoint(.openAICompletions, "http://localhost:11434/v1") == "http://localhost:11434/v1/models")
         // A base URL without the version prefix gets one.
-        #expect(endpoint(.anthropicMessages, "https://api.anthropic.com") == "https://api.anthropic.com/v1/models")
-        #expect(endpoint(.googleGenerativeAI, "https://generativelanguage.googleapis.com") ==
+        #expect(try endpoint(.anthropicMessages, "https://api.anthropic.com") == "https://api.anthropic.com/v1/models")
+        #expect(try endpoint(.googleGenerativeAI, "https://generativelanguage.googleapis.com") ==
             "https://generativelanguage.googleapis.com/v1beta/models")
+        #expect(throws: AIClientError.self) {
+            _ = try AIClient.modelsEndpoint(
+                wire: .openAICodex,
+                base: URL(string: "https://chatgpt.com/backend-api")!
+            )
+        }
     }
 
     @Test("a provider can be built for an endpoint the catalog has never seen")
