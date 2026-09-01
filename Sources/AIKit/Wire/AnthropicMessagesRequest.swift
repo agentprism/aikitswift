@@ -14,6 +14,7 @@ public enum AnthropicMessagesRequest {
         _ options: CallOptions,
         model: ModelInfo? = nil,
         reasoningToggle: ProviderInfo.ReasoningToggle? = nil,
+        providerId: String = "anthropic",
         streaming: Bool = true
     ) -> EncodedRequest {
         var body: [String: JSONValue] = [
@@ -85,7 +86,7 @@ public enum AnthropicMessagesRequest {
         }
 
         // Provider options merge last so a caller can always override.
-        for (key, value) in options.options(for: "anthropic") {
+        for (key, value) in options.options(for: providerId) {
             body[key] = value
         }
 

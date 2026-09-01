@@ -67,18 +67,14 @@ struct OpenAICodexTests {
     }
 
     @Test("Codex encoding stays streaming when shared dispatch requests non-streaming")
-    func codexEncodingCannotDisableStreaming() {
+    func codexEncodingCannotDisableStreaming() throws {
         let client = AIClient(
             provider: .init(id: "codex", api: nil, speaking: .openAICodex),
             configuration: .init()
         )
 
-        let encoded = client.encode(
-            options,
-            wire: .openAICodex,
-            model: nil,
-            streaming: false
-        )
+        let prepared = try client.prepare(options)
+        let encoded = client.encode(prepared, streaming: false)
 
         #expect(encoded.body["stream"]?.boolValue == true)
     }
@@ -225,8 +221,13 @@ struct OpenAICodexTests {
             ),
             configuration: .init(apiKey: "sk-test")
         )
-        let body = client.encode(options, wire: .openAIResponses, model: nil).body
-        let request = try client.makeRequest(wire: .openAIResponses, options: options, body: body)
+        let prepared = try client.prepare(options)
+        let body = client.encode(prepared).body
+        let request = try client.makeRequest(
+            wire: prepared.wire,
+            options: prepared.options,
+            body: body
+        )
 
         #expect(request.url?.absoluteString == "https://api.openai.com/v1/responses")
         #expect(body["store"] == nil)

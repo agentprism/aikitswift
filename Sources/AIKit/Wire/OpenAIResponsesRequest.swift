@@ -12,6 +12,7 @@ public enum OpenAIResponsesRequest {
     public static func encode(
         _ options: CallOptions,
         model: ModelInfo? = nil,
+        providerId: String = "openai",
         streaming: Bool = true
     ) -> EncodedRequest {
         var body: [String: JSONValue] = [
@@ -80,7 +81,7 @@ public enum OpenAIResponsesRequest {
             }
         }
 
-        for (key, value) in options.options(for: "openai") {
+        for (key, value) in options.options(for: providerId) {
             body[key] = value
         }
 
@@ -150,6 +151,9 @@ public enum OpenAIResponsesRequest {
                         "name": .string(call.toolName),
                         "arguments": .string(call.input),
                     ]
+                    if let itemId = call.providerMetadata?["openai"]?["itemId"] {
+                        item["id"] = itemId
+                    }
                     if let namespace = call.namespace {
                         item["namespace"] = .string(namespace)
                     }

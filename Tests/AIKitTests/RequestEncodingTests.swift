@@ -146,6 +146,35 @@ struct RequestEncodingTests {
         #expect(last?["content"]?.stringValue == "18C")
     }
 
+    @Test("OpenAI retains structured tool text and images for vision models")
+    func openAIRetainsStructuredToolImages() {
+        let image = FilePart(mediaType: "image/png", data: .base64("chat-tool-image"))
+        let prompt: Prompt = [
+            .toolResult(
+                toolCallId: "call_image",
+                toolName: "inspect",
+                content: [.text("before"), .file(image), .text("after")]
+            )
+        ]
+        let body = OpenAICompletionsRequest.encode(
+            CallOptions(model: "gpt-vision", prompt: prompt),
+            model: ModelInfo(
+                id: "gpt-vision",
+                modalities: .init(input: ["text", "image"], output: ["text"])
+            )
+        ).body
+        let messages = body["messages"]?.arrayValue
+
+        #expect(messages?.count == 2)
+        #expect(messages?[0]["role"]?.stringValue == "tool")
+        #expect(messages?[0]["content"]?.stringValue == "before\nafter")
+        #expect(messages?[1]["role"]?.stringValue == "user")
+        #expect(messages?[1]["content"]?[0]?["text"]?.stringValue
+            == "Attached image(s) from tool result:")
+        #expect(messages?[1]["content"]?[1]?["image_url"]?["url"]?.stringValue
+            == "data:image/png;base64,chat-tool-image")
+    }
+
     @Test("OpenAI keeps system as a message")
     func openAIKeepsSystemMessage() {
         let body = OpenAICompletionsRequest.encode(
@@ -223,6 +252,82 @@ struct RequestEncodingTests {
 
         let response = body["contents"]?.arrayValue?.last?["parts"]?[0]?["functionResponse"]?["response"]
         #expect(response?["result"]?.stringValue == "18C")
+    }
+
+    @Test("Chat and Google preserve JSON tool results when structured content is absent")
+    func preservesJSONToolResults() throws {
+        let result: JSONValue = [
+            "count": 2,
+            "nested": ["ok": true],
+        ]
+        let prompt: Prompt = [
+            .toolResult(toolCallId: "call_json", toolName: "lookup", result: result)
+        ]
+
+        let chatBody = OpenAICompletionsRequest.encode(
+            CallOptions(model: "gpt-5", prompt: prompt)
+        ).body
+        let chatText = try #require(chatBody["messages"]?[0]?["content"]?.stringValue)
+        #expect(try JSONValue.decode(from: Data(chatText.utf8)) == result)
+
+        let googleBody = GoogleGenerativeAIRequest.encode(
+            CallOptions(model: "gemini-3-pro", prompt: prompt)
+        ).body
+        #expect(googleBody["contents"]?[0]?["parts"]?[0]?["functionResponse"]?["response"]
+            == result)
+    }
+
+    @Test("Gemini 3 nests structured tool images in the function response")
+    func googleRetainsStructuredToolImages() {
+        let image = FilePart(mediaType: "image/jpeg", data: .base64("google-tool-image"))
+        let body = GoogleGenerativeAIRequest.encode(
+            CallOptions(model: "gemini-3-pro", prompt: [
+                .toolResult(
+                    toolCallId: "call_image",
+                    toolName: "inspect",
+                    content: [.text("before"), .file(image), .text("after")]
+                )
+            ]),
+            model: ModelInfo(
+                id: "gemini-3-pro",
+                modalities: .init(input: ["text", "image"], output: ["text"])
+            )
+        ).body
+        let response = body["contents"]?[0]?["parts"]?[0]?["functionResponse"]
+
+        #expect(response?["id"]?.stringValue == "call_image")
+        #expect(response?["response"]?["output"]?.stringValue == "before\nafter")
+        #expect(response?["parts"]?[0]?["inlineData"]?["mimeType"]?.stringValue == "image/jpeg")
+        #expect(response?["parts"]?[0]?["inlineData"]?["data"]?.stringValue
+            == "google-tool-image")
+        #expect(body["contents"]?.arrayValue?.count == 1)
+    }
+
+    @Test("older Gemini models retain tool images in a following user turn")
+    func googleRetainsLegacyToolImages() {
+        let image = FilePart(mediaType: "image/png", data: .base64("legacy-tool-image"))
+        let body = GoogleGenerativeAIRequest.encode(
+            CallOptions(model: "gemini-2.5-pro", prompt: [
+                .toolResult(
+                    toolCallId: "call_image",
+                    toolName: "inspect",
+                    content: [.file(image)]
+                )
+            ]),
+            model: ModelInfo(
+                id: "gemini-2.5-pro",
+                modalities: .init(input: ["text", "image"], output: ["text"])
+            )
+        ).body
+        let contents = body["contents"]?.arrayValue
+
+        #expect(contents?.count == 2)
+        #expect(contents?[0]["parts"]?[0]?["functionResponse"]?["response"]?["output"]?.stringValue
+            == "(see attached image)")
+        #expect(contents?[0]["parts"]?[0]?["functionResponse"]?["parts"] == nil)
+        #expect(contents?[1]["parts"]?[0]?["text"]?.stringValue == "Tool result image:")
+        #expect(contents?[1]["parts"]?[1]?["inlineData"]?["data"]?.stringValue
+            == "legacy-tool-image")
     }
 
     @Test("Google declares all functions in one tools entry")

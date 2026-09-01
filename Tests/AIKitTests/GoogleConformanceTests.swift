@@ -119,6 +119,26 @@ struct GoogleConformanceTests {
         #expect(run() == run())
     }
 
+    @Test("response id and serving model may arrive on different chunks")
+    func accumulatesResponseMetadata() {
+        var wire = GoogleGenerativeAIWire()
+
+        let first = wire.map(chunk: ["responseId": "response-1"])
+        let second = wire.map(chunk: ["modelVersion": "gemini-fallback"])
+
+        let firstMetadata = first.compactMap {
+            if case .responseMetadata(let metadata) = $0 { metadata } else { nil }
+        }.first
+        let secondMetadata = second.compactMap {
+            if case .responseMetadata(let metadata) = $0 { metadata } else { nil }
+        }.first
+
+        #expect(firstMetadata?.id == "response-1")
+        #expect(firstMetadata?.modelId == nil)
+        #expect(secondMetadata?.id == "response-1")
+        #expect(secondMetadata?.modelId == "gemini-fallback")
+    }
+
     @Test("a thought part closes an open text block")
     func switchesBetweenTextAndReasoning() {
         // Reasoning is a flag on a text part, not a distinct block type, so the

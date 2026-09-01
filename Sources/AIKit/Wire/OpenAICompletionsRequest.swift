@@ -20,6 +20,7 @@ public enum OpenAICompletionsRequest {
         model: ModelInfo? = nil,
         dialect: CompletionsDialect = .default,
         reasoningToggle: ProviderInfo.ReasoningToggle? = nil,
+        providerId: String = "openai",
         streaming: Bool = true
     ) -> EncodedRequest {
         var body: [String: JSONValue] = [
@@ -47,7 +48,8 @@ public enum OpenAICompletionsRequest {
         body["messages"] = .array(encodeMessages(
             options.prompt,
             dialect: dialect,
-            interleavedReasoningField: reasoningField
+            interleavedReasoningField: reasoningField,
+            supportsVision: model?.supportsVision ?? true
         ))
 
         if let maxTokens = options.maxOutputTokens {
@@ -104,7 +106,7 @@ public enum OpenAICompletionsRequest {
             body["response_format"] = format
         }
 
-        for (key, value) in options.options(for: "openai") {
+        for (key, value) in options.options(for: providerId) {
             body[key] = value
         }
 
@@ -116,29 +118,55 @@ public enum OpenAICompletionsRequest {
     private static func encodeMessages(
         _ prompt: Prompt,
         dialect: CompletionsDialect,
-        interleavedReasoningField: String? = nil
+        interleavedReasoningField: String? = nil,
+        supportsVision: Bool
     ) -> [JSONValue] {
         var messages: [JSONValue] = []
+        var index = prompt.startIndex
 
-        for message in prompt {
+        while index < prompt.endIndex {
+            let message = prompt[index]
             switch message.role {
             case .tool:
                 // Each tool result is its own message here, keyed by call id —
                 // unlike Anthropic, which batches them into one user turn.
-                for part in message.content {
-                    guard case .toolResult(let result) = part else { continue }
-                    var encoded: [String: JSONValue] = [
-                        "role": "tool",
-                        "tool_call_id": .string(result.toolCallId),
-                        "content": .string(AnthropicMessagesRequest.stringify(result.result)),
-                    ]
-                    // A few providers reject a tool result that omits the name,
-                    // even though the reference API ignores it.
-                    if dialect.requiresToolResultName {
-                        encoded["name"] = .string(result.toolName)
+                // Images from adjacent tool results are collected into one
+                // following user turn, matching pi's Chat Completions shape.
+                var imageParts: [JSONValue] = []
+                var toolIndex = index
+                while toolIndex < prompt.endIndex, prompt[toolIndex].role == .tool {
+                    for part in prompt[toolIndex].content {
+                        guard case .toolResult(let result) = part else { continue }
+                        let output = encodeToolResult(result, supportsVision: supportsVision)
+                        var encoded: [String: JSONValue] = [
+                            "role": "tool",
+                            "tool_call_id": .string(result.toolCallId),
+                            "content": .string(output.text),
+                        ]
+                        // A few providers reject a tool result that omits the
+                        // name, even though the reference API ignores it.
+                        if dialect.requiresToolResultName {
+                            encoded["name"] = .string(result.toolName)
+                        }
+                        messages.append(.object(encoded))
+                        imageParts.append(contentsOf: output.images.map(encodeFile))
                     }
-                    messages.append(.object(encoded))
+                    toolIndex = prompt.index(after: toolIndex)
                 }
+
+                if !imageParts.isEmpty {
+                    messages.append(.object([
+                        "role": "user",
+                        "content": .array([
+                            .object([
+                                "type": "text",
+                                "text": "Attached image(s) from tool result:",
+                            ])
+                        ] + imageParts),
+                    ]))
+                }
+                index = toolIndex
+                continue
 
             case .assistant:
                 messages.append(encodeAssistant(
@@ -149,9 +177,32 @@ public enum OpenAICompletionsRequest {
             case .system, .user:
                 messages.append(encodeSimple(message))
             }
+            index = prompt.index(after: index)
         }
 
         return messages
+    }
+
+    private static func encodeToolResult(
+        _ result: ToolResult,
+        supportsVision: Bool
+    ) -> (text: String, images: [FilePart]) {
+        guard let content = result.content else {
+            return (AnthropicMessagesRequest.stringify(result.result), [])
+        }
+
+        let text = content.compactMap { part -> String? in
+            if case .text(let value) = part { value } else { nil }
+        }.joined(separator: "\n")
+        let images = supportsVision ? content.compactMap { part -> FilePart? in
+            guard case .file(let file) = part,
+                  file.mediaType.lowercased().hasPrefix("image/") else { return nil }
+            return file
+        } : []
+
+        if !text.isEmpty { return (text, images) }
+        if !images.isEmpty { return ("(see attached image)", images) }
+        return ("(no tool output)", [])
     }
 
     private static func encodeSimple(_ message: Message) -> JSONValue {

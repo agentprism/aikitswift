@@ -8,7 +8,8 @@ public enum OpenAICodexResponsesRequest {
 
     public static func encode(
         _ options: CallOptions,
-        model: ModelInfo? = nil
+        model: ModelInfo? = nil,
+        providerId: String = "openai-codex"
     ) -> EncodedRequest {
         let systemText = options.prompt
             .filter { $0.role == .system }
@@ -84,7 +85,7 @@ public enum OpenAICodexResponsesRequest {
 
         // Provider-specific escape-hatch values retain the existing policy:
         // they apply last and may override defaults deliberately.
-        for (key, value) in options.options(for: "openai-codex") {
+        for (key, value) in options.options(for: providerId) {
             body[key] = value
         }
         if let key = body["prompt_cache_key"]?.stringValue {

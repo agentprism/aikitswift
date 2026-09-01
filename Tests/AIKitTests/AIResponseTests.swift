@@ -202,10 +202,11 @@ struct NonStreamingRequestTests {
     @Test("the accept header asks for JSON, not an event stream")
     func acceptHeader() throws {
         let subject = try AIClient(providerId: "openai", configuration: .init(apiKey: "k"))
-        let body = subject.encode(options, wire: .openAICompletions, model: nil, streaming: false).body
+        let prepared = try subject.prepare(options)
+        let body = subject.encode(prepared, streaming: false).body
 
         let request = try subject.makeRequest(
-            wire: .openAICompletions, options: options, body: body, streaming: false
+            wire: prepared.wire, options: prepared.options, body: body, streaming: false
         )
         #expect(request.value(forHTTPHeaderField: "accept") == "application/json")
     }

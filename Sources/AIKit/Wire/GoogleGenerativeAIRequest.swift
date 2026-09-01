@@ -7,7 +7,11 @@ import Foundation
 /// are a part type rather than a role.
 public enum GoogleGenerativeAIRequest {
 
-    public static func encode(_ options: CallOptions, model: ModelInfo? = nil) -> EncodedRequest {
+    public static func encode(
+        _ options: CallOptions,
+        model: ModelInfo? = nil,
+        providerId: String = "google"
+    ) -> EncodedRequest {
         var body: [String: JSONValue] = [:]
         var warnings: [Warning] = []
 
@@ -23,7 +27,11 @@ public enum GoogleGenerativeAIRequest {
             ])
         }
 
-        body["contents"] = .array(encodeContents(options.prompt))
+        body["contents"] = .array(encodeContents(
+            options.prompt,
+            modelId: options.model,
+            supportsVision: model?.supportsVision ?? true
+        ))
 
         if !options.tools.isEmpty {
             // Every function is declared inside one `tools` entry rather than
@@ -91,7 +99,7 @@ public enum GoogleGenerativeAIRequest {
             body["generationConfig"] = .object(generation)
         }
 
-        for (key, value) in options.options(for: "google") {
+        for (key, value) in options.options(for: providerId) {
             body[key] = value
         }
 
@@ -100,14 +108,51 @@ public enum GoogleGenerativeAIRequest {
 
     // MARK: - Contents
 
-    private static func encodeContents(_ prompt: Prompt) -> [JSONValue] {
+    private static func encodeContents(
+        _ prompt: Prompt,
+        modelId: String,
+        supportsVision: Bool
+    ) -> [JSONValue] {
         var contents: [JSONValue] = []
+        let includeToolCallIds = ConversationTransformer.googleRequiresToolCallId(modelId)
 
         for message in prompt where message.role != .system {
+            if message.role == .tool {
+                var functionResponses: [JSONValue] = []
+                var followingImageTurns: [[JSONValue]] = []
+
+                for part in message.content {
+                    guard case .toolResult(let result) = part else { continue }
+                    let encoded = encodeToolResult(
+                        result,
+                        modelId: modelId,
+                        includeToolCallId: includeToolCallIds,
+                        supportsVision: supportsVision
+                    )
+                    functionResponses.append(encoded.functionResponse)
+                    if !encoded.followingImages.isEmpty {
+                        followingImageTurns.append(encoded.followingImages)
+                    }
+                }
+
+                if !functionResponses.isEmpty {
+                    appendFunctionResponses(functionResponses, to: &contents)
+                }
+                for images in followingImageTurns {
+                    contents.append(.object([
+                        "role": "user",
+                        "parts": .array([.object(["text": "Tool result image:"])] + images),
+                    ]))
+                }
+                continue
+            }
+
             // Gemini knows only `user` and `model`; tool results are `user`
             // parts rather than a role of their own.
             let role = message.role == .assistant ? "model" : "user"
-            let parts = message.content.compactMap(encodePart)
+            let parts = message.content.compactMap {
+                encodePart($0, includeToolCallIds: includeToolCallIds)
+            }
 
             guard !parts.isEmpty else { continue }
             contents.append(.object(["role": .string(role), "parts": .array(parts)]))
@@ -116,7 +161,32 @@ public enum GoogleGenerativeAIRequest {
         return contents
     }
 
-    private static func encodePart(_ part: ContentPart) -> JSONValue? {
+    private static func appendFunctionResponses(
+        _ responses: [JSONValue],
+        to contents: inout [JSONValue]
+    ) {
+        if let lastIndex = contents.indices.last,
+           contents[lastIndex]["role"]?.stringValue == "user",
+           contents[lastIndex]["parts"]?.arrayValue?.contains(where: {
+               $0["functionResponse"] != nil
+           }) == true {
+            var content = contents[lastIndex].objectValue ?? [:]
+            var parts = content["parts"]?.arrayValue ?? []
+            parts.append(contentsOf: responses)
+            content["parts"] = .array(parts)
+            contents[lastIndex] = .object(content)
+        } else {
+            contents.append(.object([
+                "role": "user",
+                "parts": .array(responses),
+            ]))
+        }
+    }
+
+    private static func encodePart(
+        _ part: ContentPart,
+        includeToolCallIds: Bool
+    ) -> JSONValue? {
         switch part {
         case .text(let text):
             guard !text.isEmpty else { return nil }
@@ -131,33 +201,92 @@ public enum GoogleGenerativeAIRequest {
             return .object(encoded)
 
         case .toolCall(let call):
-            return .object(["functionCall": .object([
+            var functionCall: [String: JSONValue] = [
                 "name": .string(call.toolName),
                 // Arguments are a real object here, not a JSON string.
                 "args": (try? JSONValue.decode(from: call.input)) ?? .object([:]),
-            ])])
+            ]
+            if includeToolCallIds {
+                functionCall["id"] = .string(call.toolCallId)
+            }
+            return .object(["functionCall": .object(functionCall)])
 
-        case .toolResult(let result):
-            // Matched by tool *name*, not by call id — Gemini issues no ids.
-            return .object(["functionResponse": .object([
-                "name": .string(result.toolName),
-                "response": wrapResponse(result.result),
-            ])])
+        case .toolResult:
+            // Tool results need model-aware structured content handling and
+            // are encoded by `encodeContents` above.
+            return nil
 
         case .file(let file):
-            switch file.data {
-            case .base64(let data):
-                return .object(["inlineData": .object([
-                    "mimeType": .string(file.mediaType),
-                    "data": .string(data),
-                ])])
-            case .url(let url):
-                return .object(["fileData": .object([
-                    "mimeType": .string(file.mediaType),
-                    "fileUri": .string(url),
-                ])])
-            }
+            return encodeFile(file)
         }
+    }
+
+    private static func encodeToolResult(
+        _ result: ToolResult,
+        modelId: String,
+        includeToolCallId: Bool,
+        supportsVision: Bool
+    ) -> (functionResponse: JSONValue, followingImages: [JSONValue]) {
+        let imageParts = supportsVision ? (result.content ?? []).compactMap { part -> JSONValue? in
+            guard case .file(let file) = part,
+                  file.mediaType.lowercased().hasPrefix("image/") else { return nil }
+            return encodeFile(file)
+        } : []
+        let response: JSONValue
+
+        if let content = result.content {
+            let text = content.compactMap { part -> String? in
+                if case .text(let value) = part { value } else { nil }
+            }.joined(separator: "\n")
+            let value = !text.isEmpty ? text : !imageParts.isEmpty ? "(see attached image)" : ""
+            response = .object([
+                result.isError ? "error" : "output": .string(value)
+            ])
+        } else {
+            // Keep the existing scalar/array/object representation for callers
+            // using `ToolResult.result` instead of structured content.
+            response = wrapResponse(result.result)
+        }
+
+        var functionResponse: [String: JSONValue] = [
+            "name": .string(result.toolName),
+            "response": response,
+        ]
+        if includeToolCallId {
+            functionResponse["id"] = .string(result.toolCallId)
+        }
+
+        let nestsImages = !imageParts.isEmpty && supportsMultimodalFunctionResponse(modelId)
+        if nestsImages {
+            functionResponse["parts"] = .array(imageParts)
+        }
+
+        return (
+            .object(["functionResponse": .object(functionResponse)]),
+            nestsImages ? [] : imageParts
+        )
+    }
+
+    private static func encodeFile(_ file: FilePart) -> JSONValue {
+        switch file.data {
+        case .base64(let data):
+            return .object(["inlineData": .object([
+                "mimeType": .string(file.mediaType),
+                "data": .string(data),
+            ])])
+        case .url(let url):
+            return .object(["fileData": .object([
+                "mimeType": .string(file.mediaType),
+                "fileUri": .string(url),
+            ])])
+        }
+    }
+
+    private static func supportsMultimodalFunctionResponse(_ modelId: String) -> Bool {
+        let pattern = /^gemini(?:-live)?-(\d+)/
+        guard let match = modelId.lowercased().firstMatch(of: pattern),
+              let major = Int(match.1) else { return true }
+        return major >= 3
     }
 
     /// `functionResponse.response` must be an object. Scalars and arrays are

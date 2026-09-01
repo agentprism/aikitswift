@@ -81,11 +81,21 @@ public struct ModelInfo: Sendable, Hashable, Codable {
         public var context: Int?
         /// Maximum output tokens per request.
         public var output: Int?
+
+        public init(context: Int? = nil, output: Int? = nil) {
+            self.context = context
+            self.output = output
+        }
     }
 
     public struct Modalities: Sendable, Hashable, Codable {
         public var input: [String]?
         public var output: [String]?
+
+        public init(input: [String]? = nil, output: [String]? = nil) {
+            self.input = input
+            self.output = output
+        }
     }
 
     public var id: String

@@ -162,12 +162,13 @@ struct ClientTests {
         // DeepSeek speaks Chat Completions, so it must produce a Completions
         // body — this is the whole point of the protocol/provider split.
         let subject = try client("deepseek")
-        let body = subject.encode(
-            CallOptions(model: "deepseek-v4-flash", prompt: [.system("s"), .user("hi")]),
-            wire: .openAICompletions,
-            model: nil
-        ).body
+        let prepared = try subject.prepare(CallOptions(
+            model: "deepseek-v4-flash",
+            prompt: [.system("s"), .user("hi")]
+        ))
+        let body = subject.encode(prepared).body
 
+        #expect(prepared.wire == .openAICompletions)
         #expect(body["messages"]?[0]?["role"]?.stringValue == "system")
         #expect(body["stream_options"] != nil)
     }

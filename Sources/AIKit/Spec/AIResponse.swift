@@ -101,8 +101,20 @@ public struct AIResponse: Sendable, Hashable {
     }
 
     public var metadata: ResponseMetadata? {
-        parts.compactMap { if case .responseMetadata(let metadata) = $0 { metadata } else { nil } }
-            .first
+        let values = parts.compactMap {
+            if case .responseMetadata(let metadata) = $0 { metadata } else { nil }
+        }
+        guard !values.isEmpty else { return nil }
+
+        // A mapper may reveal response fields across more than one metadata
+        // event. Merge them so neither requested producer identity nor a
+        // server-reported fallback model is lost.
+        return values.reduce(into: ResponseMetadata()) { result, value in
+            result.id = value.id ?? result.id
+            result.timestamp = value.timestamp ?? result.timestamp
+            result.modelId = value.modelId ?? result.modelId
+            result.producer = value.producer ?? result.producer
+        }
     }
 
     // MARK: - Multi-turn replay
@@ -207,7 +219,27 @@ public struct AIResponse: Sendable, Hashable {
             providerOptions = ["openai": ["outputItems": .array(outputItems)]]
         }
 
-        return Message(role: .assistant, content: content, providerOptions: providerOptions)
+        return Message(
+            role: .assistant,
+            content: content,
+            providerOptions: providerOptions,
+            producer: metadata?.producer,
+            responseModelId: metadata?.modelId,
+            outcome: assistantMessageOutcome
+        )
+    }
+
+    /// Only failed and aborted turns need a history marker. Length, content
+    /// filtering, tool use, and unknown successful terminal reasons remain
+    /// replayable and therefore leave this `nil`.
+    private var assistantMessageOutcome: AssistantMessageOutcome? {
+        guard finishReason?.unified == .error else { return nil }
+        switch finishReason?.raw?.lowercased() {
+        case "abort", "aborted", "cancelled", "canceled":
+            return .aborted
+        default:
+            return .failed
+        }
     }
 
     /// The terminal Responses payload is authoritative because it contains the

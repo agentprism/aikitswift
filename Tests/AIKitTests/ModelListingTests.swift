@@ -90,12 +90,13 @@ struct ModelListingTests {
         #expect(provider.wireProtocol == .openAICompletions)
 
         let client = AIClient(provider: provider, configuration: .init(apiKey: "k"))
-        let body = client.encode(
-            CallOptions(model: "some-model", prompt: [.user("hi")]),
-            wire: .openAICompletions,
-            model: nil
-        ).body
+        let prepared = try client.prepare(CallOptions(
+            model: "some-model",
+            prompt: [.user("hi")]
+        ))
+        let body = client.encode(prepared).body
 
+        #expect(prepared.wire == .openAICompletions)
         #expect(body["model"]?.stringValue == "some-model")
     }
 }

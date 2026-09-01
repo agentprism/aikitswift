@@ -358,12 +358,14 @@ struct DialectTests {
         // Selection is per provider, not per protocol — that is the whole
         // point of the layer.
         let deepseek = try AIClient(providerId: "deepseek", configuration: .init(apiKey: "k"))
-        let body = deepseek.encode(
-            CallOptions(model: "deepseek-v4-flash", prompt: [.user("hi")], thinking: .level(.high)),
-            wire: .openAICompletions,
-            model: nil
-        ).body
+        let prepared = try deepseek.prepare(CallOptions(
+            model: "deepseek-v4-flash",
+            prompt: [.user("hi")],
+            thinking: .level(.high)
+        ))
+        let body = deepseek.encode(prepared).body
 
+        #expect(prepared.wire == .openAICompletions)
         #expect(body["thinking"]?["type"]?.stringValue == "enabled")
     }
 }

@@ -9,6 +9,16 @@ public enum MessageRole: String, Sendable, Hashable, Codable {
     case tool
 }
 
+/// An assistant turn that is unsafe to replay as conversation history.
+///
+/// Successful terminal reasons remain represented by ``FinishReason`` on the
+/// response. This narrow history marker exists only for the two incomplete
+/// outcomes that conversation transformation must remove.
+public enum AssistantMessageOutcome: String, Sendable, Hashable, Codable {
+    case failed
+    case aborted
+}
+
 /// Binary or remote content attached to a message.
 public struct FilePart: Sendable, Hashable {
     public enum Payload: Sendable, Hashable {
@@ -56,15 +66,37 @@ public enum ContentPart: Sendable, Hashable {
 public struct Message: Sendable, Hashable {
     public var role: MessageRole
     public var content: [ContentPart]
+    /// The requested provider/API/model that produced this assistant message.
+    ///
+    /// Hand-built history may leave this `nil`. Facade and direct-client
+    /// responses populate it so later request preparation can decide whether
+    /// provider-owned state is safe to replay.
+    public var producer: ModelDestination?
+    /// The model reported by the server, kept separate from the requested
+    /// ``producer`` identity when a fallback or router served the response.
+    public var responseModelId: String?
+    /// Whether this assistant turn failed or was aborted before it became safe
+    /// history. Conversation transformation removes either outcome.
+    public var outcome: AssistantMessageOutcome?
     /// Provider-specific options for this message, namespaced by provider id.
     ///
     /// Cache breakpoints live here, for instance.
     public var providerOptions: ProviderMetadata?
 
-    public init(role: MessageRole, content: [ContentPart], providerOptions: ProviderMetadata? = nil) {
+    public init(
+        role: MessageRole,
+        content: [ContentPart],
+        providerOptions: ProviderMetadata? = nil,
+        producer: ModelDestination? = nil,
+        responseModelId: String? = nil,
+        outcome: AssistantMessageOutcome? = nil
+    ) {
         self.role = role
         self.content = content
         self.providerOptions = providerOptions
+        self.producer = producer
+        self.responseModelId = responseModelId
+        self.outcome = outcome
     }
 }
 

@@ -43,6 +43,41 @@ one. OpenAI Codex is the exception: its supported transport is SSE, which
 `generate` collects into the same complete response. A stream can be drained
 explicitly with `try await client.stream(options).collect()`.
 
+For provider switching on each call, configure one provider-neutral facade and
+select a complete provider/API/model destination:
+
+```swift
+let ai = AIFacade(configurations: [
+    "anthropic": .init(apiKey: anthropicKey),
+    "openai": .init(apiKey: openAIKey),
+])
+
+let destination = try ai.destination(
+    providerId: "anthropic",
+    modelId: "claude-haiku-4-5"
+)
+let request = AIRequest(destination: destination, prompt: [.user("Hello")])
+
+for try await part in try ai.stream(request) { /* normalized StreamPart */ }
+let response = try await ai.generate(request)  // normalized AIResponse
+```
+
+`ModelDestination` identity includes provider, API protocol, and model. The API
+is derived from the provider's declared adapter, configurations and credentials
+stay keyed by provider id, and custom `ProviderInfo` registries use the same
+path. Generated assistant history records the requested destination in
+`producer`; a server-reported fallback remains separate in `responseModelId`.
+Hand-built assistant messages may leave both fields unset.
+
+Every facade and direct-client request transforms conversation history once at
+the shared destination-preparation boundary. Exact provider/API/model matches
+retain opaque reasoning and item state; other destinations receive readable
+reasoning, destination-safe linked tool ids, closed orphan tool calls, and
+image placeholders when the selected model is text-only. Failed or aborted
+assistant messages are excluded from replay. `ConversationTransformer` exposes
+the same deterministic value operation for callers that need to inspect a
+prepared history without sending it.
+
 Multi-turn — including the tool loop — is append, not reconstruct:
 
 ```swift
@@ -263,6 +298,7 @@ all five protocols; the catalog covers 186 providers.
 | Live model listing (`GET /models`) | ✅ except OpenAI Codex (bundled catalog) |
 | Context attribution | ✅ |
 | Non-streaming responses (`generate()`) | ✅ all protocols |
+| Provider-neutral per-call facade (`AIFacade`) | ✅ stream + complete |
 | Aggregated response + multi-turn replay (`AIResponse`) | ✅ |
 | Server-tool results (code exec, MCP, web search) | ✅ all protocols |
 | OAuth with PKCE + loopback | ✅ |

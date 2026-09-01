@@ -19,7 +19,8 @@ public struct GoogleGenerativeAIWire: WireMapper {
     private var finishReason: FinishReason = .other
     private var usage: JSONValue?
     private var emittedStreamStart = false
-    private var emittedMetadata = false
+    private var responseId: String?
+    private var responseModelId: String?
     private var finished = false
     /// Makes synthesized tool call ids deterministic.
     private var toolCallCounter = 0
@@ -95,12 +96,8 @@ public struct GoogleGenerativeAIWire: WireMapper {
             usage = metadata
         }
 
-        if !emittedMetadata, chunk["responseId"] != nil || chunk["modelVersion"] != nil {
-            emittedMetadata = true
-            parts.append(.responseMetadata(ResponseMetadata(
-                id: chunk["responseId"]?.stringValue,
-                modelId: chunk["modelVersion"]?.stringValue
-            )))
+        if let metadata = captureResponseMetadata(from: chunk) {
+            parts.append(.responseMetadata(metadata))
         }
 
         guard let candidates = chunk["candidates"]?.arrayValue, !candidates.isEmpty else {
@@ -114,6 +111,27 @@ public struct GoogleGenerativeAIWire: WireMapper {
         }
 
         return parts
+    }
+
+    /// Gemini may reveal the response id and serving model on different
+    /// chunks. Emit a metadata update whenever a previously absent field
+    /// appears so collection retains both values.
+    private mutating func captureResponseMetadata(from chunk: JSONValue) -> ResponseMetadata? {
+        var changed = false
+
+        if responseId == nil, let id = chunk["responseId"]?.stringValue, !id.isEmpty {
+            responseId = id
+            changed = true
+        }
+        if responseModelId == nil,
+           let model = chunk["modelVersion"]?.stringValue,
+           !model.isEmpty {
+            responseModelId = model
+            changed = true
+        }
+
+        guard changed else { return nil }
+        return ResponseMetadata(id: responseId, modelId: responseModelId)
     }
 
     private mutating func mapCandidate(_ candidate: JSONValue) -> [StreamPart] {

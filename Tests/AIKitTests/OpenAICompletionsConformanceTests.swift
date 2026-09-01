@@ -136,6 +136,32 @@ struct OpenAICompletionsConformanceTests {
         }
     }
 
+    @Test("response metadata fields may arrive on different chunks")
+    func accumulatesResponseMetadata() {
+        var wire = OpenAICompletionsWire()
+
+        let first = wire.map(chunk: [
+            "id": "chatcmpl_1",
+            "choices": [],
+        ])
+        let second = wire.map(chunk: [
+            "model": "fallback-model",
+            "choices": [],
+        ])
+
+        let firstMetadata = first.compactMap {
+            if case .responseMetadata(let metadata) = $0 { metadata } else { nil }
+        }.first
+        let secondMetadata = second.compactMap {
+            if case .responseMetadata(let metadata) = $0 { metadata } else { nil }
+        }.first
+
+        #expect(firstMetadata?.id == "chatcmpl_1")
+        #expect(firstMetadata?.modelId == nil)
+        #expect(secondMetadata?.id == "chatcmpl_1")
+        #expect(secondMetadata?.modelId == "fallback-model")
+    }
+
     @Test("tool call ids survive being omitted after the first chunk")
     func assemblesToolCallAcrossChunks() {
         // Only the first chunk carries the id and name; later fragments

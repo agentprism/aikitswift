@@ -50,6 +50,32 @@ extension AIClientError: LocalizedError {
     public var errorDescription: String? { description }
 }
 
+/// The single request-preparation result shared by stream and complete paths.
+///
+/// Priority-5 history transformation can consume this boundary without
+/// re-resolving provider identity, API identity, or model capabilities.
+struct PreparedAIRequest: Sendable {
+    let destination: ModelDestination
+    let provider: ProviderInfo
+    let model: ModelInfo?
+    let wire: WireProtocol
+    let options: CallOptions
+
+    fileprivate init(
+        destination: ModelDestination,
+        provider: ProviderInfo,
+        model: ModelInfo?,
+        wire: WireProtocol,
+        options: CallOptions
+    ) {
+        self.destination = destination
+        self.provider = provider
+        self.model = model
+        self.wire = wire
+        self.options = options
+    }
+}
+
 /// Sends a request to a provider and returns a normalized event stream.
 ///
 /// The client is thin on purpose. It resolves which protocol a provider speaks,
@@ -134,12 +160,13 @@ public struct AIClient: Sendable {
 
     /// Sends a request and yields normalized events as they arrive.
     public func stream(_ options: CallOptions) throws -> AsyncThrowingStream<StreamPart, any Error> {
-        guard let wire = provider.wireProtocol else {
-            throw AIClientError(kind: .unsupportedProtocol(provider.adapter ?? "none"))
-        }
+        try stream(prepare(options))
+    }
 
-        let model = provider.model(options.model)
-        let encoded = encode(options, wire: wire, model: model)
+    func stream(_ prepared: PreparedAIRequest) throws -> AsyncThrowingStream<StreamPart, any Error> {
+        let wire = prepared.wire
+        let options = prepared.options
+        let encoded = encode(prepared)
         let session = self.session
         let usesManagedCodexCredential = wire == .openAICodex
             && configuration.oauthCredentialProvider != nil
@@ -161,6 +188,7 @@ public struct AIClient: Sendable {
                     // `stream-start` itself and suppresses the mapper's. The
                     // contract stays: exactly one, first, carrying warnings.
                     continuation.yield(.streamStart(warnings: encoded.warnings))
+                    var attachedProducer = false
 
                     var credential = initialCredential
                     var preparedRequest = initialRequest
@@ -214,7 +242,13 @@ public struct AIClient: Sendable {
                         for try await event in eventSource.events {
                             for part in mapper.map(rawJSON: event.data) {
                                 if case .streamStart = part { continue }
-                                continuation.yield(part)
+                                for identified in parts(
+                                    attaching: prepared.destination,
+                                    to: part,
+                                    didAttach: &attachedProducer
+                                ) {
+                                    continuation.yield(identified)
+                                }
                             }
                             if mapper.shouldTerminateTransport {
                                 // Codex's response terminal can precede HTTP EOF.
@@ -229,7 +263,18 @@ public struct AIClient: Sendable {
                         // this runs even when the connection ended without a sentinel.
                         for part in mapper.finish() {
                             if case .streamStart = part { continue }
-                            continuation.yield(part)
+                            for identified in parts(
+                                attaching: prepared.destination,
+                                to: part,
+                                didAttach: &attachedProducer
+                            ) {
+                                continuation.yield(identified)
+                            }
+                        }
+                        if !attachedProducer {
+                            continuation.yield(.responseMetadata(ResponseMetadata(
+                                producer: prepared.destination
+                            )))
                         }
                         break requestLoop
                     }
@@ -261,15 +306,17 @@ public struct AIClient: Sendable {
     /// the same complete ``AIResponse``. To continue the conversation, append
     /// ``AIResponse/assistantMessage`` to the prompt.
     public func generate(_ options: CallOptions) async throws -> AIResponse {
-        guard let wire = provider.wireProtocol else {
-            throw AIClientError(kind: .unsupportedProtocol(provider.adapter ?? "none"))
-        }
+        try await generate(prepare(options))
+    }
+
+    func generate(_ prepared: PreparedAIRequest) async throws -> AIResponse {
+        let wire = prepared.wire
+        let options = prepared.options
         if wire == .openAICodex {
-            return try await stream(options).collect()
+            return try await stream(prepared).collect()
         }
 
-        let model = provider.model(options.model)
-        let encoded = encode(options, wire: wire, model: model, streaming: false)
+        let encoded = encode(prepared, streaming: false)
         let request = try makeRequest(
             wire: wire, options: options, body: encoded.body, streaming: false
         )
@@ -285,9 +332,17 @@ public struct AIClient: Sendable {
         // Same contract as a stream: `streamStart` first, carrying the
         // encoding warnings, then the decoded parts.
         var parts: [StreamPart] = [.streamStart(warnings: encoded.warnings)]
+        var attachedProducer = false
         for part in NonStreamingResponse.decode(try JSONValue.decode(from: data), wire: wire) {
             if case .streamStart = part { continue }
-            parts.append(part)
+            parts.append(contentsOf: self.parts(
+                attaching: prepared.destination,
+                to: part,
+                didAttach: &attachedProducer
+            ))
+        }
+        if !attachedProducer {
+            parts.append(.responseMetadata(ResponseMetadata(producer: prepared.destination)))
         }
 
         return AIResponse(parts: parts)
@@ -295,11 +350,102 @@ public struct AIClient: Sendable {
 
     // MARK: - Request construction
 
-    func encode(
+    /// Resolves provider/API/model identity and model capabilities once for
+    /// both transport paths.
+    func prepare(_ options: CallOptions) throws -> PreparedAIRequest {
+        let apiId = provider.adapter?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard let wire = WireProtocol(rawValue: apiId) else {
+            throw AIClientError(kind: .unsupportedProtocol(apiId.isEmpty ? "none" : apiId))
+        }
+
+        let destination = ModelDestination(
+            providerId: provider.id,
+            apiId: apiId,
+            modelId: options.model
+        )
+        return prepare(
+            options,
+            destination: destination,
+            model: provider.model(options.model),
+            wire: wire
+        )
+    }
+
+    /// Materializes a validated selection without resolving identity or model
+    /// capabilities a second time. The facade and direct-client paths meet at
+    /// this boundary before either stream or complete transport begins.
+    func prepare(
         _ options: CallOptions,
+        destination: ModelDestination,
+        model: ModelInfo?,
+        wire: WireProtocol
+    ) -> PreparedAIRequest {
+        var preparedOptions = options
+        preparedOptions.prompt = ConversationTransformer(
+            destination: destination,
+            model: model
+        ).transform(options.prompt)
+
+        // Request-level provider options follow the same destination isolation
+        // rule as history metadata. Encoders still apply the trusted matching
+        // namespace last, retaining the established override semantics.
+        preparedOptions.providerOptions = options.providerOptions[destination.providerId]
+            .map { [destination.providerId: $0] } ?? [:]
+
+        return PreparedAIRequest(
+            destination: destination,
+            provider: provider,
+            model: model,
+            wire: wire,
+            options: preparedOptions
+        )
+    }
+
+    /// Adds requested identity to provider response metadata without adding a
+    /// second event on normal responses. If a provider reports no metadata at
+    /// all, a synthetic metadata part is emitted before `finish` when present,
+    /// or before the stream closes otherwise.
+    private func parts(
+        attaching destination: ModelDestination,
+        to part: StreamPart,
+        didAttach: inout Bool
+    ) -> [StreamPart] {
+        if case .responseMetadata(var metadata) = part {
+            metadata.producer = destination
+            didAttach = true
+            return [.responseMetadata(metadata)]
+        }
+        if case .finish = part, !didAttach {
+            didAttach = true
+            return [
+                .responseMetadata(ResponseMetadata(producer: destination)),
+                part,
+            ]
+        }
+        return [part]
+    }
+
+    /// Encodes only from the immutable identity and capabilities resolved at
+    /// the shared preparation boundary.
+    func encode(
+        _ prepared: PreparedAIRequest,
+        streaming: Bool = true
+    ) -> EncodedRequest {
+        encode(
+            prepared.options,
+            provider: prepared.provider,
+            wire: prepared.wire,
+            model: prepared.model,
+            streaming: streaming
+        )
+    }
+
+    private func encode(
+        _ options: CallOptions,
+        provider: ProviderInfo,
         wire: WireProtocol,
         model: ModelInfo?,
-        streaming: Bool = true
+        streaming: Bool
     ) -> EncodedRequest {
         switch wire {
         case .anthropicMessages:
@@ -307,6 +453,7 @@ public struct AIClient: Sendable {
                 options,
                 model: model,
                 reasoningToggle: provider.reasoningToggle,
+                providerId: provider.id,
                 streaming: streaming
             )
         case .openAICompletions:
@@ -318,17 +465,23 @@ public struct AIClient: Sendable {
                 model: model,
                 dialect: .forProvider(provider.id),
                 reasoningToggle: provider.reasoningToggle,
+                providerId: provider.id,
                 streaming: streaming
             )
         case .openAIResponses:
-            OpenAIResponsesRequest.encode(options, model: model, streaming: streaming)
+            OpenAIResponsesRequest.encode(
+                options,
+                model: model,
+                providerId: provider.id,
+                streaming: streaming
+            )
         case .openAICodex:
             // Codex has no supported non-streaming transport. Its encoder is
             // intentionally independent of this shared dispatch flag.
-            OpenAICodexResponsesRequest.encode(options, model: model)
+            OpenAICodexResponsesRequest.encode(options, model: model, providerId: provider.id)
         case .googleGenerativeAI:
             // Gemini switches between streaming and not in the URL, not the body.
-            GoogleGenerativeAIRequest.encode(options, model: model)
+            GoogleGenerativeAIRequest.encode(options, model: model, providerId: provider.id)
         }
     }
 

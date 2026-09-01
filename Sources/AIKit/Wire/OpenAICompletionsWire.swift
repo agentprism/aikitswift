@@ -33,7 +33,9 @@ public struct OpenAICompletionsWire: WireMapper {
     private var finishReason: FinishReason = .other
     private var usage: JSONValue?
     private var emittedStreamStart = false
-    private var emittedMetadata = false
+    private var responseId: String?
+    private var responseTimestamp: Date?
+    private var responseModelId: String?
     private var finished = false
 
     public init() {}
@@ -115,13 +117,8 @@ public struct OpenAICompletionsWire: WireMapper {
             usage = chunkUsage
         }
 
-        if !emittedMetadata, let id = chunk["id"]?.stringValue, !id.isEmpty {
-            emittedMetadata = true
-            parts.append(.responseMetadata(ResponseMetadata(
-                id: id,
-                timestamp: chunk["created"]?.doubleValue.map { Date(timeIntervalSince1970: $0) },
-                modelId: chunk["model"]?.stringValue
-            )))
+        if let metadata = captureResponseMetadata(from: chunk) {
+            parts.append(.responseMetadata(metadata))
         }
 
         guard let choices = chunk["choices"]?.arrayValue, !choices.isEmpty else {
@@ -136,6 +133,33 @@ public struct OpenAICompletionsWire: WireMapper {
         }
 
         return parts
+    }
+
+    /// Providers do not all reveal response fields in the same chunk. Retain
+    /// each field the first time it appears and emit an update when later
+    /// chunks add information, especially the actual serving model.
+    private mutating func captureResponseMetadata(from chunk: JSONValue) -> ResponseMetadata? {
+        var changed = false
+
+        if responseId == nil, let id = chunk["id"]?.stringValue, !id.isEmpty {
+            responseId = id
+            changed = true
+        }
+        if responseTimestamp == nil, let created = chunk["created"]?.doubleValue {
+            responseTimestamp = Date(timeIntervalSince1970: created)
+            changed = true
+        }
+        if responseModelId == nil, let model = chunk["model"]?.stringValue, !model.isEmpty {
+            responseModelId = model
+            changed = true
+        }
+
+        guard changed else { return nil }
+        return ResponseMetadata(
+            id: responseId,
+            timestamp: responseTimestamp,
+            modelId: responseModelId
+        )
     }
 
     private mutating func mapChoice(_ choice: JSONValue) -> [StreamPart] {

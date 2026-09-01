@@ -28,11 +28,22 @@ public struct ResponseMetadata: Sendable, Hashable {
     /// The model that actually served the response, which is not always the
     /// model that was requested — server-side fallbacks can reroute a turn.
     public var modelId: String?
+    /// The requested provider/API/model identity for this response.
+    ///
+    /// ``AIClient`` attaches this at the normalized response boundary.
+    /// `modelId` remains the actual model reported by the server.
+    public var producer: ModelDestination?
 
-    public init(id: String? = nil, timestamp: Date? = nil, modelId: String? = nil) {
+    public init(
+        id: String? = nil,
+        timestamp: Date? = nil,
+        modelId: String? = nil,
+        producer: ModelDestination? = nil
+    ) {
         self.id = id
         self.timestamp = timestamp
         self.modelId = modelId
+        self.producer = producer
     }
 }
 

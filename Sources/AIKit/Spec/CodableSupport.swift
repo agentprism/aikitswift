@@ -158,6 +158,9 @@ extension Message: Codable {
         case role
         case content
         case providerOptions
+        case producer
+        case responseModelId
+        case outcome
     }
 
     public init(from decoder: any Decoder) throws {
@@ -165,7 +168,10 @@ extension Message: Codable {
         self.init(
             role: try container.decode(MessageRole.self, forKey: .role),
             content: try container.decode([ContentPart].self, forKey: .content),
-            providerOptions: try container.decodeIfPresent(ProviderMetadata.self, forKey: .providerOptions)
+            providerOptions: try container.decodeIfPresent(ProviderMetadata.self, forKey: .providerOptions),
+            producer: try container.decodeIfPresent(ModelDestination.self, forKey: .producer),
+            responseModelId: try container.decodeIfPresent(String.self, forKey: .responseModelId),
+            outcome: try container.decodeIfPresent(AssistantMessageOutcome.self, forKey: .outcome)
         )
     }
 
@@ -174,6 +180,9 @@ extension Message: Codable {
         try container.encode(role, forKey: .role)
         try container.encode(content, forKey: .content)
         try container.encodeIfPresent(providerOptions, forKey: .providerOptions)
+        try container.encodeIfPresent(producer, forKey: .producer)
+        try container.encodeIfPresent(responseModelId, forKey: .responseModelId)
+        try container.encodeIfPresent(outcome, forKey: .outcome)
     }
 }
 
