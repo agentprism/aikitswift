@@ -21,6 +21,7 @@ struct CodableSupportTests {
         let toolCall = ToolCall(
             toolCallId: "call_1",
             toolName: "search_health",
+            namespace: "health",
             input: #"{"days":7}"#,
             providerExecuted: true,
             dynamic: true,
@@ -32,6 +33,10 @@ struct CodableSupportTests {
             toolCallId: "call_1",
             toolName: "search_health",
             result: .object(["summary": "ok"]),
+            content: [
+                .text("ok"),
+                .file(FilePart(mediaType: "image/png", data: .base64("cG5n"))),
+            ],
             isError: false,
             preliminary: true,
             dynamic: true,

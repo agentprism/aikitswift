@@ -231,13 +231,26 @@ public struct AnthropicMessagesWire: WireMapper {
 
         case "thinking":
             blocks[index] = .reasoning
-            return [.reasoningStart(id: String(index))]
+            var metadata: [String: JSONValue] = [
+                "blockType": .string("thinking"),
+                "wireBlock": block,
+            ]
+            if let signature = block["signature"] {
+                metadata["signature"] = signature
+            }
+            return [.reasoningStart(
+                id: String(index),
+                providerMetadata: ["anthropic": metadata]
+            )]
 
         case "redacted_thinking":
             blocks[index] = .reasoning
             // The payload is opaque and must be replayed verbatim on the next
             // turn, so it is preserved rather than discarded.
-            var metadata: [String: JSONValue] = [:]
+            var metadata: [String: JSONValue] = [
+                "blockType": .string("redacted_thinking"),
+                "wireBlock": block,
+            ]
             if let data = block["data"] {
                 metadata["redactedData"] = data
             }

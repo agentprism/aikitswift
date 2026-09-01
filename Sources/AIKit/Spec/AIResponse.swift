@@ -65,6 +65,11 @@ public struct AIResponse: Sendable, Hashable {
         parts.compactMap { if case .file(let file) = $0 { file } else { nil } }
     }
 
+    /// Recognized provider lifecycle payloads in arrival order.
+    public var providerEvents: [ProviderEvent] {
+        parts.compactMap { if case .providerEvent(let event) = $0 { event } else { nil } }
+    }
+
     // MARK: - Outcome
 
     /// Warnings about the request — settings that were dropped or adjusted
@@ -122,8 +127,10 @@ public struct AIResponse: Sendable, Hashable {
     /// `providerMetadata` — some providers sign thinking blocks and reject the
     /// next request unless the signature comes back byte-for-byte, which is why
     /// assembling this message by hand is the classic way multi-turn reasoning
-    /// breaks. Provider-executed tool calls are omitted: their results already
-    /// exist server-side and have no replay shape in the request encoders.
+    /// breaks. Provider-executed tool calls remain absent from the normalized
+    /// content. OpenAI Responses history is retained separately as its exact
+    /// output-item list because those provider-owned items are valid next-turn
+    /// input and carry fields the normalized content intentionally does not.
     public var assistantMessage: Message {
         // Blocks are keyed by the triad id so interleaved deltas land in the
         // block that started them, and ordered by when each block started.
@@ -195,7 +202,31 @@ public struct AIResponse: Sendable, Hashable {
             }
         }
 
-        return Message(role: .assistant, content: content)
+        var providerOptions: ProviderMetadata?
+        if let outputItems = openAIOutputItems, !outputItems.isEmpty {
+            providerOptions = ["openai": ["outputItems": .array(outputItems)]]
+        }
+
+        return Message(role: .assistant, content: content, providerOptions: providerOptions)
+    }
+
+    /// The terminal Responses payload is authoritative because it contains the
+    /// final form of every output item. A partial stream falls back to the last
+    /// `output_item.done` payloads it did receive.
+    private var openAIOutputItems: [JSONValue]? {
+        for event in providerEvents.reversed()
+        where event.provider == "openai"
+            && ["response.completed", "response.incomplete", "response.failed"].contains(event.type) {
+            if let output = event.payload["response"]?["output"]?.arrayValue {
+                return output
+            }
+        }
+
+        let completedItems = providerEvents.compactMap { event -> JSONValue? in
+            guard event.provider == "openai", event.type == "response.output_item.done" else { return nil }
+            return event.payload["item"]
+        }
+        return completedItems.isEmpty ? nil : completedItems
     }
 }
 

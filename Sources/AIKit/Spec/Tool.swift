@@ -1,5 +1,16 @@
 import Foundation
 
+/// A group exposed to OpenAI Responses as a function namespace.
+public struct ToolNamespace: Sendable, Hashable {
+    public var name: String
+    public var description: String
+
+    public init(name: String, description: String) {
+        self.name = name
+        self.description = description
+    }
+}
+
 /// A tool the model may call.
 public struct ToolDefinition: Sendable, Hashable {
     public var name: String
@@ -17,17 +28,22 @@ public struct ToolDefinition: Sendable, Hashable {
     /// Not universally supported, and usually requires `additionalProperties:
     /// false` plus a complete `required` list.
     public var strict: Bool
+    /// Groups this function into a Responses namespace. Other wire protocols
+    /// continue to encode the function normally.
+    public var namespace: ToolNamespace?
 
     public init(
         name: String,
         description: String? = nil,
         inputSchema: JSONValue,
-        strict: Bool = false
+        strict: Bool = false,
+        namespace: ToolNamespace? = nil
     ) {
         self.name = name
         self.description = description
         self.inputSchema = inputSchema
         self.strict = strict
+        self.namespace = namespace
     }
 }
 

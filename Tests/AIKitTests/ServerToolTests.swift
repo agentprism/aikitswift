@@ -208,16 +208,26 @@ struct OtherProtocolServerToolTests {
         var wire = OpenAIResponsesWire()
         _ = wire.map(chunk: [
             "type": "response.output_item.added",
-            "item": ["type": "shell_call", "id": "sh_1", "call_id": "call_sh"],
+            "output_index": 0,
+            "item": [
+                "type": "shell_call", "id": "sh_1", "call_id": "call_sh",
+                "status": "in_progress", "action": ["commands": []],
+            ],
         ])
         _ = wire.map(chunk: [
             "type": "response.shell_call_command.delta",
             "item_id": "sh_1",
+            "output_index": 0,
+            "command_index": 0,
             "delta": "ls -la /tmp",
         ])
         let parts = wire.map(chunk: [
             "type": "response.output_item.done",
-            "item": ["type": "shell_call", "id": "sh_1", "call_id": "call_sh", "status": "completed"],
+            "output_index": 0,
+            "item": [
+                "type": "shell_call", "id": "sh_1", "call_id": "call_sh",
+                "status": "completed", "action": ["commands": ["ls -la /tmp"]],
+            ],
         ])
 
         let call = parts.compactMap { if case .toolCall(let c) = $0 { return c } else { return nil } }.first
@@ -232,6 +242,7 @@ struct OtherProtocolServerToolTests {
         var wire = OpenAIResponsesWire()
         _ = wire.map(chunk: [
             "type": "response.output_item.added",
+            "output_index": 0,
             "item": ["type": "future_tool_call", "id": "ft_1"],
         ])
         _ = wire.map(chunk: [
@@ -241,6 +252,7 @@ struct OtherProtocolServerToolTests {
         ])
         let parts = wire.map(chunk: [
             "type": "response.output_item.done",
+            "output_index": 0,
             "item": ["type": "future_tool_call", "id": "ft_1"],
         ])
 
@@ -254,11 +266,19 @@ struct OtherProtocolServerToolTests {
         var wire = OpenAIResponsesWire()
         _ = wire.map(chunk: [
             "type": "response.output_item.added",
-            "item": ["type": "mcp_call", "id": "mcp_1", "call_id": "call_mcp"],
+            "output_index": 0,
+            "item": [
+                "type": "mcp_call", "id": "mcp_1", "call_id": "call_mcp",
+                "arguments": "", "name": "lookup", "server_label": "server",
+            ],
         ])
         let parts = wire.map(chunk: [
             "type": "response.output_item.done",
-            "item": ["type": "mcp_call", "id": "mcp_1", "call_id": "call_mcp"],
+            "output_index": 0,
+            "item": [
+                "type": "mcp_call", "id": "mcp_1", "call_id": "call_mcp",
+                "arguments": "{}", "name": "lookup", "server_label": "server",
+            ],
         ])
 
         let call = parts.compactMap { if case .toolCall(let c) = $0 { return c } else { return nil } }.first

@@ -79,6 +79,33 @@ struct NonStreamingTests {
         WireConformance.check([parts], label: name)
     }
 
+    @Test("Responses items without ids round-trip without inventing wire identity")
+    func responsesOptionalItemIdentityRoundTrip() throws {
+        let item: JSONValue = [
+            "type": "reasoning",
+            "encrypted_content": "opaque+/=bytes",
+            "summary": [],
+        ]
+        let body: JSONValue = [
+            "id": "resp_1",
+            "type": "response",
+            "model": "gpt-5.4",
+            "status": "completed",
+            "output": .array([item]),
+        ]
+
+        let parts = NonStreamingResponse.decode(body, wire: .openAIResponses)
+        #expect(!parts.contains { if case .error = $0 { return true } else { return false } })
+
+        let message = AIResponse(parts: parts).assistantMessage
+        let replayed = OpenAIResponsesRequest.encode(CallOptions(
+            model: "gpt-5.4", prompt: [.user("continue"), message]
+        )).body["input"]?.arrayValue?.last
+
+        #expect(replayed == item)
+        #expect(replayed?["id"] == nil)
+    }
+
     @Test("Google bodies decode to a well-formed stream", arguments: try googleBodies)
     func googleConforms(name: String) throws {
         let parts = NonStreamingResponse.decode(try Self.body("google", name), wire: .googleGenerativeAI)

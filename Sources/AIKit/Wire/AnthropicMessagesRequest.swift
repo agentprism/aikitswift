@@ -146,19 +146,45 @@ public enum AnthropicMessagesRequest {
     // MARK: - Messages
 
     private static func encodeMessages(_ prompt: Prompt) -> [JSONValue] {
-        var messages: [JSONValue] = []
+        var messages: [(role: String, content: [JSONValue], hasToolResults: Bool)] = []
 
         for message in prompt where message.role != .system {
             // Tool results ride in a `user` turn here rather than a role of
             // their own, which is where the OpenAI shape differs.
             let role = message.role == .tool ? "user" : message.role.rawValue
-            let content = message.content.compactMap(encodeContent)
+            var content = message.content.compactMap(encodeContent)
 
             guard !content.isEmpty else { continue }
-            messages.append(.object(["role": .string(role), "content": .array(content)]))
+
+            // Anthropic requires tool_result blocks to lead the user content
+            // immediately following tool_use. Stable partitioning retains the
+            // order among results and among any following user content.
+            if role == "user" {
+                let results = content.filter { $0["type"]?.stringValue == "tool_result" }
+                let remainder = content.filter { $0["type"]?.stringValue != "tool_result" }
+                content = results + remainder
+            }
+            let hasToolResults = content.contains { $0["type"]?.stringValue == "tool_result" }
+
+            // Consecutive tool messages are one Anthropic user turn. A user
+            // message immediately following them is appended after the results,
+            // preserving the required tool-result-first ordering.
+            if role == "user", messages.last?.role == role, messages.last?.hasToolResults == true {
+                messages[messages.count - 1].content.append(contentsOf: content)
+                messages[messages.count - 1].hasToolResults =
+                    messages[messages.count - 1].hasToolResults || hasToolResults
+                let all = messages[messages.count - 1].content
+                messages[messages.count - 1].content =
+                    all.filter { $0["type"]?.stringValue == "tool_result" }
+                    + all.filter { $0["type"]?.stringValue != "tool_result" }
+            } else {
+                messages.append((role, content, hasToolResults))
+            }
         }
 
-        return messages
+        return messages.map { message in
+            .object(["role": .string(message.role), "content": .array(message.content)])
+        }
     }
 
     private static func encodeContent(_ part: ContentPart) -> JSONValue? {
@@ -168,10 +194,22 @@ public enum AnthropicMessagesRequest {
             return .object(["type": "text", "text": .string(text)])
 
         case .reasoning(let text, let metadata):
+            let anthropic = metadata?["anthropic"]
+            if anthropic?["blockType"]?.stringValue == "redacted_thinking"
+                || anthropic?["redactedData"] != nil {
+                if let wireBlock = anthropic?["wireBlock"] {
+                    return wireBlock
+                }
+                guard let data = anthropic?["redactedData"] else { return nil }
+                return .object(["type": "redacted_thinking", "data": data])
+            }
+
             // The signature must be echoed back byte-for-byte; the API rejects
             // a thinking block that has been edited or reconstructed.
-            var block: [String: JSONValue] = ["type": "thinking", "thinking": .string(text)]
-            if let signature = metadata?["anthropic"]?["signature"] {
+            var block = anthropic?["wireBlock"]?.objectValue ?? ["type": "thinking"]
+            block["type"] = .string("thinking")
+            block["thinking"] = .string(text)
+            if let signature = anthropic?["signature"] {
                 block["signature"] = signature
             }
             return .object(block)
@@ -188,13 +226,23 @@ public enum AnthropicMessagesRequest {
             var block: [String: JSONValue] = [
                 "type": "tool_result",
                 "tool_use_id": .string(result.toolCallId),
-                "content": .string(stringify(result.result)),
+                "content": result.content.map { .array($0.map(encodeToolResultContent)) }
+                    ?? .string(stringify(result.result)),
             ]
             if result.isError { block["is_error"] = .bool(true) }
             return .object(block)
 
         case .file(let file):
             return encodeFile(file)
+        }
+    }
+
+    private static func encodeToolResultContent(_ part: ToolResultContent) -> JSONValue {
+        switch part {
+        case .text(let text):
+            .object(["type": "text", "text": .string(text)])
+        case .file(let file):
+            encodeFile(file)
         }
     }
 

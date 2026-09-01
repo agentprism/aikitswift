@@ -94,7 +94,9 @@ public enum NonStreamingResponse {
             chunks.append(.object([
                 "type": "content_block_start",
                 "index": position,
-                "content_block": .object(["type": "thinking", "thinking": .string("")]),
+                // Retain the complete provider block as metadata in the mapper;
+                // deltas below still produce the normalized readable content.
+                "content_block": block,
             ]))
             if let thinking = block["thinking"]?.stringValue, !thinking.isEmpty {
                 chunks.append(.object([
@@ -172,9 +174,17 @@ public enum NonStreamingResponse {
     private static func openAIResponses(_ body: JSONValue) -> [JSONValue] {
         var chunks: [JSONValue] = [.object(["type": "response.created", "response": body])]
 
-        for item in body["output"]?.arrayValue ?? [] {
-            let itemId = item["id"]?.stringValue ?? UUID().uuidString
-            chunks.append(.object(["type": "response.output_item.added", "item": item]))
+        for (outputIndex, item) in (body["output"]?.arrayValue ?? []).enumerated() {
+            // `id` is optional on Responses input/output items. The synthetic
+            // event stream still needs a stable internal key, but that key
+            // must never be written into the retained item itself.
+            let itemId = item["id"]?.stringValue ?? "output-index:\(outputIndex)"
+            let position = JSONValue.number(Double(outputIndex))
+            chunks.append(.object([
+                "type": "response.output_item.added",
+                "output_index": position,
+                "item": item,
+            ]))
 
             switch item["type"]?.stringValue {
             case "message":
@@ -185,13 +195,19 @@ public enum NonStreamingResponse {
                     chunks.append(.object([
                         "type": "response.content_part.added",
                         "item_id": .string(itemId),
+                        "output_index": .number(Double(outputIndex)),
                         "content_index": position,
-                        "part": .object(["type": "output_text"]),
+                        "part": .object([
+                            "type": "output_text",
+                            "text": "",
+                            "annotations": [],
+                        ]),
                     ]))
                     if let text = part["text"]?.stringValue, !text.isEmpty {
                         chunks.append(.object([
                             "type": "response.output_text.delta",
                             "item_id": .string(itemId),
+                            "output_index": .number(Double(outputIndex)),
                             "content_index": position,
                             "delta": .string(text),
                         ]))
@@ -199,26 +215,30 @@ public enum NonStreamingResponse {
                     chunks.append(.object([
                         "type": "response.content_part.done",
                         "item_id": .string(itemId),
+                        "output_index": .number(Double(outputIndex)),
                         "content_index": position,
-                        "part": .object(["type": "output_text"]),
+                        "part": part,
                     ]))
                 }
 
             case "function_call":
                 if let arguments = item["arguments"]?.stringValue, !arguments.isEmpty {
                     chunks.append(.object([
-                        "type": "response.function_call_arguments.delta",
-                        "item_id": .string(itemId),
-                        "delta": .string(arguments),
+                            "type": "response.function_call_arguments.delta",
+                            "item_id": .string(itemId),
+                            "output_index": position,
+                            "delta": .string(arguments),
                     ]))
                 }
 
             case "reasoning":
-                for summary in item["summary"]?.arrayValue ?? [] {
+                for (summaryIndex, summary) in (item["summary"]?.arrayValue ?? []).enumerated() {
                     guard let text = summary["text"]?.stringValue, !text.isEmpty else { continue }
                     chunks.append(.object([
                         "type": "response.reasoning_summary_text.delta",
                         "item_id": .string(itemId),
+                        "output_index": position,
+                        "summary_index": .number(Double(summaryIndex)),
                         "delta": .string(text),
                     ]))
                 }
@@ -227,7 +247,11 @@ public enum NonStreamingResponse {
                 break
             }
 
-            chunks.append(.object(["type": "response.output_item.done", "item": item]))
+            chunks.append(.object([
+                "type": "response.output_item.done",
+                "output_index": position,
+                "item": item,
+            ]))
         }
 
         let terminal = switch body["status"]?.stringValue {

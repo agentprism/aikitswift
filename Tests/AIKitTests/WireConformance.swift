@@ -109,14 +109,17 @@ enum WireConformance {
                     opened.contains(call.toolCallId),
                     "\(name): tool call \(call.toolCallId) has no preceding tool-input-start"
                 )
-                // Arguments stream in as fragments that are individually
-                // invalid JSON. Reassembly being off by one character produces
-                // an unusable call, and the failure would otherwise surface
-                // only at runtime against a live provider.
-                #expect(
-                    (try? JSONValue.decode(from: call.input)) != nil,
-                    "\(name): tool call \(call.toolName) produced unparseable input: \(call.input)"
-                )
+                // Function arguments must assemble into JSON. Custom tools are
+                // grammar-constrained arbitrary text and must retain those
+                // exact bytes instead of being rewritten as JSON.
+                let isCustom = call.providerMetadata?["openai"]?["item"]?["type"]?.stringValue
+                    == "custom_tool_call"
+                if !isCustom {
+                    #expect(
+                        (try? JSONValue.decode(from: call.input)) != nil,
+                        "\(name): tool call \(call.toolName) produced unparseable input: \(call.input)"
+                    )
+                }
                 #expect(!call.toolName.isEmpty, "\(name): tool call \(call.toolCallId) has no name")
 
             default:

@@ -98,6 +98,22 @@ extension Message {
         ))])
     }
 
+    /// A structured, potentially multimodal tool result.
+    public static func toolResult(
+        toolCallId: String,
+        toolName: String,
+        content: [ToolResultContent],
+        isError: Bool = false
+    ) -> Message {
+        Message(role: .tool, content: [.toolResult(ToolResult(
+            toolCallId: toolCallId,
+            toolName: toolName,
+            result: .null,
+            content: content,
+            isError: isError
+        ))])
+    }
+
     /// All text in this message, concatenated.
     public var text: String {
         content.compactMap { if case .text(let value) = $0 { return value } else { return nil } }

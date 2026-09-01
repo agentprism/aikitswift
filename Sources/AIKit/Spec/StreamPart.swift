@@ -40,6 +40,9 @@ public struct ResponseMetadata: Sendable, Hashable {
 public struct ToolCall: Sendable, Hashable {
     public var toolCallId: String
     public var toolName: String
+    /// The Responses function namespace, when the provider grouped this
+    /// function under one. The namespace is distinct from the function name.
+    public var namespace: String?
     /// The arguments as a JSON *string*, not a parsed object.
     ///
     /// It stays a string because that is what streamed in, character by
@@ -57,6 +60,7 @@ public struct ToolCall: Sendable, Hashable {
     public init(
         toolCallId: String,
         toolName: String,
+        namespace: String? = nil,
         input: String,
         providerExecuted: Bool = false,
         dynamic: Bool = false,
@@ -64,6 +68,7 @@ public struct ToolCall: Sendable, Hashable {
     ) {
         self.toolCallId = toolCallId
         self.toolName = toolName
+        self.namespace = namespace
         self.input = input
         self.providerExecuted = providerExecuted
         self.dynamic = dynamic
@@ -71,12 +76,24 @@ public struct ToolCall: Sendable, Hashable {
     }
 }
 
-/// The result of a tool the *provider* executed. Client-executed tool results
-/// are something you send back, not something you receive.
+/// Rich content returned from a client-executed tool.
+///
+/// Providers that accept structured tool output can retain text and images as
+/// content blocks instead of flattening them into a JSON string.
+public enum ToolResultContent: Sendable, Hashable {
+    case text(String)
+    case file(FilePart)
+}
+
+/// A tool result, whether received from a provider-executed tool or sent back
+/// after a client-executed call.
 public struct ToolResult: Sendable, Hashable {
     public var toolCallId: String
     public var toolName: String
     public var result: JSONValue
+    /// Structured output when the result contains multimodal content.
+    /// `result` remains available for scalar and JSON-valued tool results.
+    public var content: [ToolResultContent]?
     public var isError: Bool
     /// Preliminary results replace one another; a final result always follows.
     public var preliminary: Bool
@@ -87,6 +104,7 @@ public struct ToolResult: Sendable, Hashable {
         toolCallId: String,
         toolName: String,
         result: JSONValue,
+        content: [ToolResultContent]? = nil,
         isError: Bool = false,
         preliminary: Bool = false,
         dynamic: Bool = false,
@@ -95,10 +113,26 @@ public struct ToolResult: Sendable, Hashable {
         self.toolCallId = toolCallId
         self.toolName = toolName
         self.result = result
+        self.content = content
         self.isError = isError
         self.preliminary = preliminary
         self.dynamic = dynamic
         self.providerMetadata = providerMetadata
+    }
+}
+
+/// A provider event whose wire payload is known but has no provider-neutral
+/// event of its own. This is distinct from ``StreamPart/raw(_:)``, which is
+/// reserved for event types the mapper does not recognize yet.
+public struct ProviderEvent: Sendable, Hashable {
+    public var provider: String
+    public var type: String
+    public var payload: JSONValue
+
+    public init(provider: String, type: String, payload: JSONValue) {
+        self.provider = provider
+        self.type = type
+        self.payload = payload
     }
 }
 
@@ -203,9 +237,13 @@ public enum StreamPart: Sendable, Hashable {
     /// Always last on a stream that completed. Carries final usage.
     case finish(usage: Usage, finishReason: FinishReason, providerMetadata: ProviderMetadata? = nil)
 
-    /// A provider chunk that has no normalized equivalent, passed through
-    /// untouched. Emitting `raw` rather than dropping the chunk means a
-    /// provider can ship a new block type without this library losing data.
+    /// A recognized provider lifecycle payload retained byte-for-byte at the
+    /// decoded JSON level, including events with no normalized equivalent.
+    case providerEvent(ProviderEvent)
+
+    /// An unrecognized provider chunk, passed through untouched. Emitting
+    /// `raw` rather than dropping the chunk means a provider can ship a new
+    /// block type without this library losing data.
     case raw(JSONValue)
 
     case error(StreamError)

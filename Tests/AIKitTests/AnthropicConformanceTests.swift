@@ -94,4 +94,66 @@ struct AnthropicConformanceTests {
         #expect(future.unified == .other)
         #expect(future.raw == "something_new")
     }
+
+    @Test("signed thinking replays in its original block shape")
+    func replaysSignedThinking() throws {
+        let name = "anthropic-clear-thinking.1"
+        let chunks = try Fixture.chunks(Self.set, name)
+        let expectedThinking = chunks.compactMap { chunk -> String? in
+            guard chunk["delta"]?["type"]?.stringValue == "thinking_delta" else { return nil }
+            return chunk["delta"]?["thinking"]?.stringValue
+        }.joined()
+        let signatures = chunks.compactMap { chunk -> JSONValue? in
+            guard chunk["delta"]?["type"]?.stringValue == "signature_delta" else { return nil }
+            return chunk["delta"]?["signature"]
+        }
+        let expectedSignature = try #require(signatures.first)
+        let parts = try #require(try Fixture.replay(
+            AnthropicMessagesWire.self, Self.set, name, splitOn: Fixture.anthropicBoundary
+        ).first)
+
+        let message = AIResponse(parts: parts).assistantMessage
+        let encoded = AnthropicMessagesRequest.encode(CallOptions(
+            model: "claude-sonnet-4-5-20250929", prompt: [.user("calculate"), message]
+        )).body["messages"]?.arrayValue?.last?["content"]?.arrayValue?.first
+
+        #expect(encoded == .object([
+            "type": "thinking",
+            "thinking": .string(expectedThinking),
+            "signature": expectedSignature,
+        ]))
+    }
+
+    @Test("redacted thinking replays in its original block shape")
+    func replaysRedactedThinking() throws {
+        let opaque = "opaque+/=bytes"
+        let wireBlock: JSONValue = [
+            "type": "redacted_thinking",
+            "data": .string(opaque),
+            "provider_extension": ["version": 1],
+        ]
+        var wire = AnthropicMessagesWire()
+        var parts = wire.map(chunk: [
+            "type": "content_block_start",
+            "index": 0,
+            "content_block": wireBlock,
+        ])
+        parts += wire.map(chunk: ["type": "content_block_stop", "index": 0])
+        let message = AIResponse(parts: parts).assistantMessage
+
+        guard case .reasoning(let text, let metadata)? = message.content.first else {
+            Issue.record("expected an opaque reasoning part")
+            return
+        }
+        #expect(text.isEmpty)
+        #expect(metadata?["anthropic"]?["blockType"]?.stringValue == "redacted_thinking")
+        #expect(metadata?["anthropic"]?["redactedData"]?.stringValue == opaque)
+
+        let encoded = AnthropicMessagesRequest.encode(CallOptions(
+            model: "claude-opus-4-8", prompt: [.user("before"), message]
+        )).body["messages"]?.arrayValue?.last?["content"]?.arrayValue?.first
+        #expect(encoded == wireBlock)
+        #expect(encoded?["thinking"] == nil)
+        #expect(encoded?["signature"] == nil)
+    }
 }

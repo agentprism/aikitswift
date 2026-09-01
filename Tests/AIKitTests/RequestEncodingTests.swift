@@ -93,6 +93,32 @@ struct RequestEncodingTests {
         #expect(body["tools"]?[0]?["name"]?.stringValue == "get_weather")
     }
 
+    @Test("Anthropic groups tool results first in one user turn")
+    func anthropicGroupsAndOrdersToolResults() {
+        let prompt: Prompt = [
+            Message(role: .assistant, content: [
+                .toolCall(ToolCall(toolCallId: "call_1", toolName: "one", input: "{}")),
+                .toolCall(ToolCall(toolCallId: "call_2", toolName: "two", input: "{}")),
+            ]),
+            .toolResult(toolCallId: "call_1", toolName: "one", result: "first"),
+            .toolResult(toolCallId: "call_2", toolName: "two", result: "second"),
+            .user("continue"),
+        ]
+
+        let messages = AnthropicMessagesRequest.encode(
+            CallOptions(model: "claude-opus-4-8", prompt: prompt)
+        ).body["messages"]?.arrayValue
+
+        let user = messages?.last
+        #expect(messages?.count == 2)
+        #expect(user?["role"]?.stringValue == "user")
+        #expect(user?["content"]?.arrayValue?.map { $0["type"]?.stringValue } == [
+            "tool_result", "tool_result", "text",
+        ])
+        #expect(user?["content"]?[0]?["tool_use_id"]?.stringValue == "call_1")
+        #expect(user?["content"]?[1]?["tool_use_id"]?.stringValue == "call_2")
+    }
+
     // MARK: - OpenAI Completions
 
     @Test("OpenAI opts in to usage on streamed responses")
@@ -290,6 +316,68 @@ struct RequestEncodingTests {
 
         #expect(body["tools"]?[0]?["name"]?.stringValue == "get_weather")
         #expect(body["tools"]?[0]?["function"] == nil)
+    }
+
+    @Test("Responses groups namespaced functions")
+    func responsesGroupsFunctionNamespaces() {
+        let namespace = ToolNamespace(name: "weather", description: "Weather operations")
+        let tools = [
+            ToolDefinition(name: "current", inputSchema: ["type": "object"], namespace: namespace),
+            ToolDefinition(name: "forecast", inputSchema: ["type": "object"], namespace: namespace),
+            Self.weatherTool,
+        ]
+        let encoded = OpenAIResponsesRequest.encode(
+            CallOptions(model: "gpt-5.4", prompt: [.user("hi")], tools: tools)
+        ).body["tools"]?.arrayValue
+
+        let group = encoded?.first
+        #expect(group?["type"]?.stringValue == "namespace")
+        #expect(group?["name"]?.stringValue == "weather")
+        #expect(group?["description"]?.stringValue == "Weather operations")
+        #expect(group?["tools"]?.arrayValue?.map { $0["name"]?.stringValue } == ["current", "forecast"])
+        #expect(encoded?.last?["type"]?.stringValue == "function")
+    }
+
+    @Test("Responses structured function output retains text and image content")
+    func responsesEncodesStructuredFunctionOutput() {
+        let result = Message.toolResult(
+            toolCallId: "call_1",
+            toolName: "inspect",
+            content: [
+                .text("found it"),
+                .file(FilePart(mediaType: "image/png", data: .base64("aW1hZ2U="))),
+            ]
+        )
+        let output = OpenAIResponsesRequest.encode(
+            CallOptions(model: "gpt-5.4", prompt: [result])
+        ).body["input"]?[0]?["output"]?.arrayValue
+
+        let text = output?.first
+        let image = output?.last
+        #expect(text?["type"]?.stringValue == "input_text")
+        #expect(text?["text"]?.stringValue == "found it")
+        #expect(image?["type"]?.stringValue == "input_image")
+        #expect(image?["image_url"]?.stringValue == "data:image/png;base64,aW1hZ2U=")
+    }
+
+    @Test("Responses does not invent optional output item identifiers")
+    func responsesPreservesAbsentOutputItemId() {
+        let item: JSONValue = [
+            "type": "reasoning",
+            "encrypted_content": "opaque",
+            "summary": [],
+        ]
+        let message = Message(
+            role: .assistant,
+            content: [],
+            providerOptions: ["openai": ["outputItems": .array([item])]]
+        )
+        let replayed = OpenAIResponsesRequest.encode(
+            CallOptions(model: "gpt-5.4", prompt: [message])
+        ).body["input"]?[0]
+
+        #expect(replayed == item)
+        #expect(replayed?["id"] == nil)
     }
 
     @Test("Responses warns that stop sequences were dropped")

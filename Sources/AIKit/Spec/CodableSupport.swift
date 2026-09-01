@@ -58,6 +58,41 @@ extension FilePart: Codable {
     }
 }
 
+extension ToolResultContent: Codable {
+    private enum CodingKeys: String, CodingKey {
+        case kind
+        case text
+        case file
+    }
+
+    private enum Kind: String, Codable {
+        case text
+        case file
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        switch try container.decode(Kind.self, forKey: .kind) {
+        case .text:
+            self = .text(try container.decode(String.self, forKey: .text))
+        case .file:
+            self = .file(try container.decode(FilePart.self, forKey: .file))
+        }
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        switch self {
+        case .text(let text):
+            try container.encode(Kind.text, forKey: .kind)
+            try container.encode(text, forKey: .text)
+        case .file(let file):
+            try container.encode(Kind.file, forKey: .kind)
+            try container.encode(file, forKey: .file)
+        }
+    }
+}
+
 extension ContentPart: Codable {
     private enum CodingKeys: String, CodingKey {
         case kind
@@ -146,6 +181,7 @@ extension ToolCall: Codable {
     private enum CodingKeys: String, CodingKey {
         case toolCallId
         case toolName
+        case namespace
         case input
         case providerExecuted
         case dynamic
@@ -157,6 +193,7 @@ extension ToolCall: Codable {
         self.init(
             toolCallId: try container.decode(String.self, forKey: .toolCallId),
             toolName: try container.decode(String.self, forKey: .toolName),
+            namespace: try container.decodeIfPresent(String.self, forKey: .namespace),
             input: try container.decode(String.self, forKey: .input),
             providerExecuted: try container.decodeIfPresent(Bool.self, forKey: .providerExecuted) ?? false,
             dynamic: try container.decodeIfPresent(Bool.self, forKey: .dynamic) ?? false,
@@ -168,6 +205,7 @@ extension ToolCall: Codable {
         var container = encoder.container(keyedBy: CodingKeys.self)
         try container.encode(toolCallId, forKey: .toolCallId)
         try container.encode(toolName, forKey: .toolName)
+        try container.encodeIfPresent(namespace, forKey: .namespace)
         try container.encode(input, forKey: .input)
         try container.encode(providerExecuted, forKey: .providerExecuted)
         try container.encode(dynamic, forKey: .dynamic)
@@ -180,6 +218,7 @@ extension ToolResult: Codable {
         case toolCallId
         case toolName
         case result
+        case content
         case isError
         case preliminary
         case dynamic
@@ -192,6 +231,7 @@ extension ToolResult: Codable {
             toolCallId: try container.decode(String.self, forKey: .toolCallId),
             toolName: try container.decode(String.self, forKey: .toolName),
             result: try container.decode(JSONValue.self, forKey: .result),
+            content: try container.decodeIfPresent([ToolResultContent].self, forKey: .content),
             isError: try container.decodeIfPresent(Bool.self, forKey: .isError) ?? false,
             preliminary: try container.decodeIfPresent(Bool.self, forKey: .preliminary) ?? false,
             dynamic: try container.decodeIfPresent(Bool.self, forKey: .dynamic) ?? false,
@@ -204,6 +244,7 @@ extension ToolResult: Codable {
         try container.encode(toolCallId, forKey: .toolCallId)
         try container.encode(toolName, forKey: .toolName)
         try container.encode(result, forKey: .result)
+        try container.encodeIfPresent(content, forKey: .content)
         try container.encode(isError, forKey: .isError)
         try container.encode(preliminary, forKey: .preliminary)
         try container.encode(dynamic, forKey: .dynamic)
