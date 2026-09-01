@@ -1,9 +1,20 @@
 import AIKit
+import Darwin
 import Foundation
 
 @main
 struct ChatGPTHandoff {
-    static func main() async throws {
+    static func main() async {
+        do {
+            try await run()
+        } catch {
+            let message = "ChatGPTHandoff failed: \(error.localizedDescription)\n"
+            FileHandle.standardError.write(Data(message.utf8))
+            exit(EXIT_FAILURE)
+        }
+    }
+
+    private static func run() async throws {
         let anthropicKey = try requiredEnvironmentVariable("ANTHROPIC_API_KEY")
         let codexCredentials = try await logInToChatGPT()
 
@@ -13,11 +24,11 @@ struct ChatGPTHandoff {
         ])
         let codex = try ai.destination(
             providerId: "openai-codex",
-            modelId: "gpt-5.4-mini"
+            modelId: "gpt-5.6-sol"
         )
         let claude = try ai.destination(
             providerId: "anthropic",
-            modelId: "claude-haiku-4-5"
+            modelId: "claude-sonnet-4-5"
         )
 
         var conversation: Prompt = [
@@ -25,16 +36,18 @@ struct ChatGPTHandoff {
         ]
 
         let first = try await ask(
-            "What is 25 × 18? Explain the calculation briefly.",
+            "Find the smallest positive integer that is divisible by 7 and leaves remainder 1, 2, 3, and 4 when divided by 2, 3, 4, and 5 respectively. Explain briefly.",
             using: codex,
+            thinking: .level(.xhigh),
             in: &conversation,
             facade: ai
         )
         conversation.append(first.assistantMessage)
 
         let second = try await ask(
-            "Is that calculation correct? If so, give one real-world example that uses it.",
+            "Check that result independently, then give the next larger integer with the same properties.",
             using: claude,
+            thinking: .level(.high),
             in: &conversation,
             facade: ai
         )
@@ -50,14 +63,14 @@ struct ChatGPTHandoff {
 
         do {
             _ = try await credentials.credential()
-            print("Using the saved ChatGPT login.")
+            writeOutput("Using the saved ChatGPT login.\n")
         } catch OAuthCredentialManagerError.missingCredential {
-            print("Opening ChatGPT login in your browser…")
+            writeOutput("Opening ChatGPT login in your browser…\n")
             let credential = try await oauth.authorizePKCE { url in
                 openInDefaultBrowser(url)
             }
             try await credentials.install(credential)
-            print("ChatGPT login saved in Keychain.")
+            writeOutput("ChatGPT login saved in Keychain.\n")
         }
 
         return credentials
@@ -66,28 +79,34 @@ struct ChatGPTHandoff {
     private static func ask(
         _ prompt: String,
         using destination: ModelDestination,
+        thinking: Thinking,
         in conversation: inout Prompt,
         facade: AIFacade
     ) async throws -> AIResponse {
         conversation.append(.user(prompt))
-        print("\n[\(destination.providerId)/\(destination.modelId)]")
+        let thinkingDescription = thinking.level?.rawValue ?? (thinking.isOff ? "off" : "on")
+        writeOutput("\n[\(destination.providerId)/\(destination.modelId); thinking=\(thinkingDescription)]\n")
 
         var parts: [StreamPart] = []
         let request = AIRequest(
             destination: destination,
             prompt: conversation,
-            thinking: .level(.medium)
+            thinking: thinking
         )
 
         for try await part in try facade.stream(request) {
             parts.append(part)
             if case .textDelta(_, let delta, _) = part {
-                FileHandle.standardOutput.write(Data(delta.utf8))
+                writeOutput(delta)
             }
         }
-        print()
+        writeOutput("\n")
 
         return AIResponse(parts: parts)
+    }
+
+    private static func writeOutput(_ text: String) {
+        FileHandle.standardOutput.write(Data(text.utf8))
     }
 
     private static func requiredEnvironmentVariable(_ name: String) throws -> String {
